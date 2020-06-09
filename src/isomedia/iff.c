@@ -104,15 +104,23 @@ GF_Err colr_Read(GF_Box *s, GF_BitStream *bs)
 
 	p->colour_type = gf_bs_read_u32(bs);
 	p->size -= 4;
-	if (p->colour_type == GF_ISOM_SUBTYPE_NCLX) {
+	switch (p->colour_type) {
+	case GF_ISOM_SUBTYPE_NCLX:
 		p->colour_primaries = gf_bs_read_u16(bs);
 		p->transfer_characteristics = gf_bs_read_u16(bs);
 		p->matrix_coefficients = gf_bs_read_u16(bs);
 		p->full_range_flag = (gf_bs_read_u8(bs) & 0x80 ? GF_TRUE : GF_FALSE);
-	} else {
+		break;
+	case GF_ISOM_SUBTYPE_NCLC:
+		p->colour_primaries = gf_bs_read_u16(bs);
+		p->transfer_characteristics = gf_bs_read_u16(bs);
+		p->matrix_coefficients = gf_bs_read_u16(bs);
+		break;
+	default:
 		p->opaque = gf_malloc(sizeof(u8)*(size_t)p->size);
 		p->opaque_size = (u32) p->size;
 		gf_bs_read_data(bs, (char *) p->opaque, p->opaque_size);
+		break;
 	}
 	return GF_OK;
 }
@@ -125,15 +133,24 @@ GF_Err colr_Write(GF_Box *s, GF_BitStream *bs)
 	e = gf_isom_box_write_header(s, bs);
 	if (e) return e;
 
-	if (p->colour_type != GF_ISOM_SUBTYPE_NCLX) {
-		gf_bs_write_u32(bs, p->colour_type);
-		gf_bs_write_data(bs, (char *)p->opaque, p->opaque_size);
-	} else {
+	switch (p->colour_type) {
+	case GF_ISOM_SUBTYPE_NCLX:
 		gf_bs_write_u32(bs, p->colour_type);
 		gf_bs_write_u16(bs, p->colour_primaries);
 		gf_bs_write_u16(bs, p->transfer_characteristics);
 		gf_bs_write_u16(bs, p->matrix_coefficients);
 		gf_bs_write_u8(bs, (p->full_range_flag == GF_TRUE ? 0x80 : 0));
+		break;
+	case GF_ISOM_SUBTYPE_NCLC:
+		gf_bs_write_u32(bs, p->colour_type);
+		gf_bs_write_u16(bs, p->colour_primaries);
+		gf_bs_write_u16(bs, p->transfer_characteristics);
+		gf_bs_write_u16(bs, p->matrix_coefficients);
+		break;
+	default:
+		gf_bs_write_u32(bs, p->colour_type);
+		gf_bs_write_data(bs, (char *)p->opaque, p->opaque_size);
+		break;
 	}
 	return GF_OK;
 }
@@ -142,10 +159,16 @@ GF_Err colr_Size(GF_Box *s)
 {
 	GF_ColourInformationBox *p = (GF_ColourInformationBox*)s;
 
-	if (p->colour_type != GF_ISOM_SUBTYPE_NCLX) {
-		p->size += 4 + p->opaque_size;
-	} else {
+	switch (p->colour_type) {
+	case GF_ISOM_SUBTYPE_NCLX:
 		p->size += 11;
+		break;
+	case GF_ISOM_SUBTYPE_NCLC:
+		p->size += 10;
+		break;
+	default:
+		p->size += 4 + p->opaque_size;
+		break;
 	}
 	return GF_OK;
 }
@@ -657,7 +680,7 @@ GF_Err grptype_Write(GF_Box *s, GF_BitStream *bs)
 GF_Err grptype_Size(GF_Box *s)
 {
 	GF_EntityToGroupTypeBox *ptr = (GF_EntityToGroupTypeBox *)s;
-	ptr->size += 8 * (ptr->entity_id_count * sizeof(u32));
+	ptr->size += 8 + 4*ptr->entity_id_count;
 	return GF_OK;
 }
 
@@ -709,13 +732,54 @@ GF_Err auxc_Write(GF_Box *s, GF_BitStream *bs)
 GF_Err auxc_Size(GF_Box *s)
 {
 	GF_AuxiliaryTypePropertyBox *p = (GF_AuxiliaryTypePropertyBox*)s;
-	p->size += 1;
+	p->size += strlen(p->aux_urn) + 1 + p->data_size;
 	return GF_OK;
 }
 
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
 
+void auxi_del(GF_Box *s)
+{
+	GF_AuxiliaryTypeInfoBox *ptr = (GF_AuxiliaryTypeInfoBox *)s;
+	if (ptr->aux_track_type) gf_free(ptr->aux_track_type);
+	if (ptr) gf_free(ptr);
+	return;
+}
 
+GF_Err auxi_Read(GF_Box *s, GF_BitStream *bs)
+{
+	GF_AuxiliaryTypeInfoBox *ptr = (GF_AuxiliaryTypeInfoBox *)s;
+	return gf_isom_read_null_terminated_string(s, bs, s->size, &ptr->aux_track_type);
+}
+
+GF_Box *auxi_New()
+{
+	ISOM_DECL_BOX_ALLOC(GF_AuxiliaryTypeInfoBox, GF_ISOM_BOX_TYPE_AUXI);
+	return (GF_Box *) tmp;
+}
+
+#ifndef GPAC_DISABLE_ISOM_WRITE
+
+GF_Err auxi_Write(GF_Box *s, GF_BitStream *bs)
+{
+	GF_Err e;
+	GF_AuxiliaryTypeInfoBox *ptr = (GF_AuxiliaryTypeInfoBox *)s;
+
+	e = gf_isom_full_box_write(s, bs);
+	if (e) return e;
+	//with terminating 0
+	gf_bs_write_data(bs, ptr->aux_track_type, (u32) strlen(ptr->aux_track_type) + 1 );
+	return GF_OK;
+}
+
+GF_Err auxi_Size(GF_Box *s)
+{
+	GF_AuxiliaryTypeInfoBox *ptr = (GF_AuxiliaryTypeInfoBox *)s;
+	ptr->size += strlen(ptr->aux_track_type) + 1;
+	return GF_OK;
+}
+
+#endif /*GPAC_DISABLE_ISOM_WRITE*/
 GF_Box *oinf_New()
 {
 	ISOM_DECL_BOX_ALLOC(GF_OINFPropertyBox, GF_ISOM_BOX_TYPE_OINF);
@@ -799,6 +863,109 @@ GF_Err tols_Size(GF_Box *s)
 #endif /*GPAC_DISABLE_ISOM_WRITE*/
 
 
+GF_Box *clli_New()
+{
+	ISOM_DECL_BOX_ALLOC(GF_ContentLightLevelBox, GF_ISOM_BOX_TYPE_CLLI);
+	return (GF_Box *)tmp;
+}
+
+void clli_del(GF_Box *a)
+{
+	GF_ContentLightLevelBox *p = (GF_ContentLightLevelBox *)a;
+	gf_free(p);
+}
+
+GF_Err clli_Read(GF_Box *s, GF_BitStream *bs)
+{
+	GF_ContentLightLevelBox *p = (GF_ContentLightLevelBox *)s;
+	p->max_content_light_level = gf_bs_read_u16(bs);
+	p->max_pic_average_light_level = gf_bs_read_u16(bs);
+	return GF_OK;
+}
+
+#ifndef GPAC_DISABLE_ISOM_WRITE
+
+GF_Err clli_Write(GF_Box *s, GF_BitStream *bs)
+{
+	GF_Err e;
+	GF_ContentLightLevelBox *p = (GF_ContentLightLevelBox*)s;
+	e = gf_isom_box_write_header(s, bs);
+	if (e) return e;
+	gf_bs_write_u16(bs, p->max_content_light_level);
+	gf_bs_write_u16(bs, p->max_pic_average_light_level);
+	return GF_OK;
+}
+
+GF_Err clli_Size(GF_Box *s)
+{
+	GF_ContentLightLevelBox *p = (GF_ContentLightLevelBox*)s;
+	p->size += 4;
+	return GF_OK;
+}
+
+#endif /*GPAC_DISABLE_ISOM_WRITE*/
+
+
+GF_Box *mdcv_New()
+{
+	ISOM_DECL_BOX_ALLOC(GF_MasteringDisplayColourVolumeBox, GF_ISOM_BOX_TYPE_MDCV);
+	return (GF_Box *)tmp;
+}
+
+void mdcv_del(GF_Box *a)
+{
+	GF_MasteringDisplayColourVolumeBox *p = (GF_MasteringDisplayColourVolumeBox *)a;
+	gf_free(p);
+}
+
+GF_Err mdcv_Read(GF_Box *s, GF_BitStream *bs)
+{
+	int c = 0;
+	GF_MasteringDisplayColourVolumeBox *p = (GF_MasteringDisplayColourVolumeBox *)s;
+	for (c = 0; c<3; c++) {
+		p->display_primaries[c].x = gf_bs_read_u16(bs);
+		p->display_primaries[c].y = gf_bs_read_u16(bs);
+	}
+	p->white_point_x = gf_bs_read_u16(bs);
+	p->white_point_y = gf_bs_read_u16(bs);
+	p->max_display_mastering_luminance = gf_bs_read_u32(bs);
+	p->min_display_mastering_luminance = gf_bs_read_u32(bs);
+
+	return GF_OK;
+}
+
+#ifndef GPAC_DISABLE_ISOM_WRITE
+
+GF_Err mdcv_Write(GF_Box *s, GF_BitStream *bs)
+{
+	int c = 0;
+	GF_Err e;
+	GF_MasteringDisplayColourVolumeBox *p = (GF_MasteringDisplayColourVolumeBox*)s;
+	e = gf_isom_box_write_header(s, bs);
+	if (e) return e;
+
+	for (c = 0; c<3; c++) {
+		gf_bs_write_u16(bs, p->display_primaries[c].x);
+		gf_bs_write_u16(bs, p->display_primaries[c].y);
+	}
+	gf_bs_write_u16(bs, p->white_point_x);
+	gf_bs_write_u16(bs, p->white_point_y);
+	gf_bs_write_u32(bs, p->max_display_mastering_luminance);
+	gf_bs_write_u32(bs, p->min_display_mastering_luminance);
+	
+	return GF_OK;
+}
+
+GF_Err mdcv_Size(GF_Box *s)
+{
+	GF_MasteringDisplayColourVolumeBox *p = (GF_MasteringDisplayColourVolumeBox*)s;
+	p->size += 24;
+	return GF_OK;
+}
+
+#endif /*GPAC_DISABLE_ISOM_WRITE*/
+
+
 
 GF_EXPORT
 GF_Err gf_isom_iff_create_image_item_from_track(GF_ISOFile *movie, Bool root_meta, u32 meta_track_number, u32 imported_track, const char *item_name, u32 item_id, GF_ImageItemProperties *image_props, GF_List *item_extent_refs) {
@@ -806,6 +973,8 @@ GF_Err gf_isom_iff_create_image_item_from_track(GF_ISOFile *movie, Bool root_met
 	u32 imported_sample_desc_index = 1;
 //	u32 sample_index = 1;
 	u32 w, h, hSpacing, vSpacing;
+	u8 num_channels;
+	u8 bits_per_channel[3];
 	u32 subtype;
 	GF_ISOSample *sample = NULL;
 	u32 timescale;
@@ -880,18 +1049,30 @@ GF_Err gf_isom_iff_create_image_item_from_track(GF_ISOFile *movie, Bool root_met
 			((GF_AVCConfigurationBox *)config_box)->config = gf_isom_avc_config_get(movie, imported_track, imported_sample_desc_index);
 			item_type = GF_ISOM_SUBTYPE_AVC_H264;
 			config_needed = 1;
+			num_channels = 3;
+			bits_per_channel[0] = ((GF_AVCConfigurationBox *)config_box)->config->luma_bit_depth;
+			bits_per_channel[1] = ((GF_AVCConfigurationBox *)config_box)->config->chroma_bit_depth;
+			bits_per_channel[2] = ((GF_AVCConfigurationBox *)config_box)->config->chroma_bit_depth;
 			break;
 		case GF_ISOM_SUBTYPE_SVC_H264:
 			config_box = gf_isom_box_new(GF_ISOM_BOX_TYPE_SVCC);
 			((GF_AVCConfigurationBox *)config_box)->config = gf_isom_svc_config_get(movie, imported_track, imported_sample_desc_index);
 			item_type = GF_ISOM_SUBTYPE_SVC_H264;
 			config_needed = 1;
+			num_channels = 3;
+			bits_per_channel[0] = ((GF_AVCConfigurationBox *)config_box)->config->luma_bit_depth;
+			bits_per_channel[1] = ((GF_AVCConfigurationBox *)config_box)->config->chroma_bit_depth;
+			bits_per_channel[2] = ((GF_AVCConfigurationBox *)config_box)->config->chroma_bit_depth;
 			break;
 		case GF_ISOM_SUBTYPE_MVC_H264:
 			config_box = gf_isom_box_new(GF_ISOM_BOX_TYPE_MVCC);
 			((GF_AVCConfigurationBox *)config_box)->config = gf_isom_mvc_config_get(movie, imported_track, imported_sample_desc_index);
 			item_type = GF_ISOM_SUBTYPE_MVC_H264;
 			config_needed = 1;
+			num_channels = 3;
+			bits_per_channel[0] = ((GF_AVCConfigurationBox *)config_box)->config->luma_bit_depth;
+			bits_per_channel[1] = ((GF_AVCConfigurationBox *)config_box)->config->chroma_bit_depth;
+			bits_per_channel[2] = ((GF_AVCConfigurationBox *)config_box)->config->chroma_bit_depth;
 			break;
 		case GF_ISOM_SUBTYPE_HVC1:
 		case GF_ISOM_SUBTYPE_HEV1:
@@ -913,7 +1094,32 @@ GF_Err gf_isom_iff_create_image_item_from_track(GF_ISOFile *movie, Bool root_met
 				((GF_HEVCConfigurationBox *)config_box)->config = gf_isom_lhvc_config_get(movie, imported_track, imported_sample_desc_index);
 				item_type = GF_ISOM_SUBTYPE_LHV1;
 			}
+			num_channels = 3;
+			bits_per_channel[0] = ((GF_HEVCConfigurationBox *)config_box)->config->luma_bit_depth;
+			bits_per_channel[1] = ((GF_HEVCConfigurationBox *)config_box)->config->chroma_bit_depth;
+			bits_per_channel[2] = ((GF_HEVCConfigurationBox *)config_box)->config->chroma_bit_depth;
 			//media_brand = GF_ISOM_BRAND_HEIC;
+			break;
+		case GF_ISOM_SUBTYPE_AV01:
+			{
+				config_box = gf_isom_box_new(GF_ISOM_BOX_TYPE_AV1C);
+				((GF_AV1ConfigurationBox *)config_box)->config = gf_isom_av1_config_get(movie, imported_track, imported_sample_desc_index);
+				item_type = GF_ISOM_SUBTYPE_AV01;
+				config_needed = 1;
+				u8 depth = ((GF_AV1ConfigurationBox *)config_box)->config->high_bitdepth ? (((GF_AV1ConfigurationBox *)config_box)->config->twelve_bit ? 12 : 10 ) : 8;
+				if (((GF_AV1ConfigurationBox *)config_box)->config->monochrome) {
+					num_channels = 1;
+					bits_per_channel[0] = depth;
+					bits_per_channel[1] = 0;
+					bits_per_channel[2] = 0;
+				} else {
+					num_channels = 3;
+					bits_per_channel[0] = depth;
+					bits_per_channel[1] = depth;
+					bits_per_channel[2] = depth;
+				}
+				//media_brand = GF_ISOM_BRAND_AVIF;
+			}
 			break;
 		default:
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("Error: Codec not supported to create HEIF image items\n"));
@@ -949,6 +1155,12 @@ GF_Err gf_isom_iff_create_image_item_from_track(GF_ISOFile *movie, Bool root_met
 			image_props->vSpacing = vSpacing;
 		}
 		image_props->config = config_box;
+		if (!image_props->num_channels) {
+			image_props->num_channels = num_channels;
+			image_props->bits_per_channel[0] = bits_per_channel[0];
+			image_props->bits_per_channel[1] = bits_per_channel[1];
+			image_props->bits_per_channel[2] = bits_per_channel[2];
+		}
 
 		timescale = gf_isom_get_media_timescale(movie, imported_track);
 		e = gf_isom_get_sample_for_media_time(movie, imported_track, (u64)(image_props->time*timescale), &sample_desc_index, GF_ISOM_SEARCH_SYNC_FORWARD, &sample, NULL);

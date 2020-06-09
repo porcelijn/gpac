@@ -61,6 +61,8 @@ struct __tag_bitstream
 
 	char *buffer_io;
 	u32 buffer_io_size, buffer_written;
+
+	u64 cookie;
 };
 
 GF_Err gf_bs_reassign_buffer(GF_BitStream *bs, const char *buffer, u64 BufferSize)
@@ -262,8 +264,9 @@ static u8 BS_ReadByte(GF_BitStream *bs)
 		res = fgetc(bs->stream);
 		return res;
 	}
-	if (bs->EndOfStream) bs->EndOfStream(bs->par);
-	else {
+	if (bs->EndOfStream) {
+		bs->EndOfStream(bs->par);
+	} else {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[BS] Attempt to overread bitstream\n"));
 	}
 	assert(bs->position <= 1+bs->size);
@@ -500,7 +503,7 @@ static void BS_WriteByte(GF_BitStream *bs, u8 val)
 			if (bs->size > 0xFFFFFFFF) return;
 			bs->size = bs->size ? (bs->size * 2) : BS_MEM_BLOCK_ALLOC_SIZE;
 			bs->original = (char*)gf_realloc(bs->original, (u32)bs->size);
-			if (!bs->original) return;	
+			if (!bs->original) return;
 		}
 		if (bs->original)
 			bs->original[bs->position] = val;
@@ -540,11 +543,19 @@ GF_EXPORT
 void gf_bs_write_int(GF_BitStream *bs, s32 _value, s32 nBits)
 {
 	u32 value, nb_shift;
+	s32 max_shift = sizeof(s32) * 8;
 	if (!nBits) return;
+	if (nBits > max_shift) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[BS] Attempt to write %d bits, when max is %d\n", nBits, max_shift));
+	}
+	while (nBits > max_shift) {
+		gf_bs_write_int(bs, 0, max_shift);
+		nBits -= max_shift;
+	}
 	//move to unsigned to avoid sanitizer warnings when we pass a value not codable on the given number of bits
 	//we do this when setting bit fileds to all 1's
 	value = (u32) _value;
-	nb_shift = sizeof (s32) * 8 - nBits;
+	nb_shift = max_shift - nBits;
 	if (nb_shift)
 		value <<= nb_shift;
 
@@ -558,17 +569,23 @@ void gf_bs_write_int(GF_BitStream *bs, s32 _value, s32 nBits)
 GF_EXPORT
 void gf_bs_write_long_int(GF_BitStream *bs, s64 _value, s32 nBits)
 {
-	if (nBits>64) {
-		gf_bs_write_int(bs, 0, nBits-64);
-		gf_bs_write_long_int(bs, _value, 64);
-	} else {
-		//cf note in gf_bs_write_int
-		u64 value = (u64) _value;
-		value <<= sizeof (s64) * 8 - nBits;
-		while (--nBits >= 0) {
-			BS_WriteBit (bs, ((s64)value) < 0);
-			value <<= 1;
-		}
+	s32 max_shift = sizeof(s64) * 8;
+	if (!nBits) return;
+	if (nBits > max_shift) {
+		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("[BS] Attempt to write %d bits, when max is %d\n", nBits, max_shift));
+	}
+	while (nBits > max_shift) {
+		gf_bs_write_long_int(bs, 0, max_shift);
+		nBits -= max_shift;
+	}
+
+	//cf note in gf_bs_write_int
+	u64 value = (u64) _value;
+	value <<= max_shift - nBits;
+
+	while (--nBits >= 0) {
+		BS_WriteBit (bs, ((s64)value) < 0);
+		value <<= 1;
 	}
 }
 
@@ -1018,10 +1035,12 @@ u64 gf_bs_get_refreshed_size(GF_BitStream *bs)
 	default:
 		if (bs->buffer_io)
 			bs_flush_cache(bs);
-		offset = gf_ftell(bs->stream);
-		gf_fseek(bs->stream, 0, SEEK_END);
-		bs->size = gf_ftell(bs->stream);
-		gf_fseek(bs->stream, offset, SEEK_SET);
+		if (bs->stream) {
+			offset = gf_ftell(bs->stream);
+			gf_fseek(bs->stream, 0, SEEK_END);
+			bs->size = gf_ftell(bs->stream);
+			gf_fseek(bs->stream, offset, SEEK_SET);
+		}
 		return bs->size;
 	}
 }
@@ -1057,6 +1076,14 @@ void gf_bs_set_eos_callback(GF_BitStream *bs, void (*EndOfStream)(void *par), vo
 	bs->par = par;
 }
 
+
+GF_EXPORT
+u64 gf_bs_read_u64_le(GF_BitStream *bs)
+{
+	u32 low = gf_bs_read_u32_le(bs);
+	u64 high = gf_bs_read_u32_le(bs);
+	return (high << 32) + low;
+}
 
 GF_EXPORT
 u32 gf_bs_read_u32_le(GF_BitStream *bs)
@@ -1178,4 +1205,62 @@ void gf_bs_reassign(GF_BitStream *bs, FILE *stream)
 			gf_bs_seek(bs, bs->position);
 		break;
 	}
+}
+
+u64 gf_bs_set_cookie(GF_BitStream *bs, u64 cookie)
+{
+	u64 res = 0;
+	if (bs) {
+		res = bs->cookie;
+		bs->cookie = cookie;
+	}
+	return res;
+}
+
+u64 gf_bs_get_cookie(GF_BitStream *bs)
+{
+	if (!bs) return 0;
+	return bs->cookie;
+}
+
+GF_EXPORT
+GF_Err gf_bs_insert_data(GF_BitStream *bs, u8 *data, u32 size, u64 offset)
+{
+	u64 cur_r, cur_w, pos;
+	u32 nb_io;
+
+	pos = bs->position;
+	nb_io = gf_bs_write_data(bs, (char *) data, size);
+	if (nb_io != size) goto exit;
+
+	cur_w = bs->position;
+	gf_bs_seek(bs, pos);
+	cur_r = pos;
+	pos = cur_w;
+	while (cur_r > offset) {
+		u8 block[8196];
+		u32 move_bytes = 8196;
+		if (cur_r - offset < move_bytes)
+			move_bytes = (u32) (cur_r - offset);
+
+		gf_bs_seek(bs, cur_r - move_bytes);
+		nb_io = gf_bs_read_data(bs, (char *) block, move_bytes);
+		if (nb_io != move_bytes) goto exit;
+		gf_bs_seek(bs, cur_w - move_bytes);
+		nb_io = gf_bs_write_data(bs, (char *) block, move_bytes);
+		if (nb_io != move_bytes) goto exit;
+		cur_r -= move_bytes;
+		cur_w -= move_bytes;
+	}
+
+	gf_bs_seek(bs, offset);
+	nb_io = gf_bs_write_data(bs, (char *) data, size);
+	if (nb_io != size) goto exit;
+
+	gf_bs_seek(bs, pos);
+	return GF_OK;
+
+exit:
+	gf_bs_seek(bs, pos);
+	return GF_IO_ERR;
 }

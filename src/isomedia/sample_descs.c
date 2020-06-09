@@ -144,6 +144,8 @@ GF_Err gf_isom_audio_sample_entry_read(GF_AudioSampleEntryBox *ptr, GF_BitStream
 	ptr->samplerate_lo = gf_bs_read_u16(bs);
 
 	ptr->size -= 28;
+	if (!ptr->is_qtff) return GF_OK;
+	
 	if (ptr->version==1) {
 		if (ptr->size<16) return GF_ISOM_INVALID_FILE;
 		gf_bs_read_data(bs, (char *) ptr->extensions, 16);
@@ -158,6 +160,23 @@ GF_Err gf_isom_audio_sample_entry_read(GF_AudioSampleEntryBox *ptr, GF_BitStream
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 
+static GF_Box *get_audio_codec_cfg_box(GF_AudioSampleEntryBox *ptr)
+{
+	GF_MPEGAudioSampleEntryBox *mpga = (GF_MPEGAudioSampleEntryBox *) ptr;
+	switch (ptr->type) {
+	case GF_ISOM_BOX_TYPE_MP4A:
+		return (GF_Box *)mpga->esd;
+	case GF_ISOM_BOX_TYPE_AC3:
+	case GF_ISOM_BOX_TYPE_EC3:
+		return (GF_Box *)mpga->cfg_ac3;
+	case GF_ISOM_BOX_TYPE_OPUS:
+		return (GF_Box *)mpga->cfg_opus;
+	case GF_ISOM_BOX_TYPE_MHA1:
+	case GF_ISOM_BOX_TYPE_MHA2:
+		return (GF_Box *)mpga->cfg_mha;
+	}
+	return NULL;
+}
 void gf_isom_audio_sample_entry_write(GF_AudioSampleEntryBox *ptr, GF_BitStream *bs)
 {
 	gf_bs_write_data(bs, ptr->reserved, 6);
@@ -172,20 +191,74 @@ void gf_isom_audio_sample_entry_write(GF_AudioSampleEntryBox *ptr, GF_BitStream 
 	gf_bs_write_u16(bs, ptr->packet_size);
 	gf_bs_write_u16(bs, ptr->samplerate_hi);
 	gf_bs_write_u16(bs, ptr->samplerate_lo);
-	if (ptr->version==1) {
-		gf_bs_write_data(bs,  (char *) ptr->extensions, 16);
-	} else if (ptr->version==2) {
-		gf_bs_write_data(bs,  (char *) ptr->extensions, 36);
+
+	if (ptr->is_qtff) {
+		GF_Box *codec_ext = NULL;
+		if (ptr->is_qtff==1) {
+			codec_ext = get_audio_codec_cfg_box(ptr);
+		}
+
+		if (ptr->version==1) {
+			if (ptr->is_qtff==2) {
+				gf_bs_write_data(bs,  (char *) ptr->extensions, 16);
+			} else {
+				gf_bs_write_u32(bs, codec_ext ? 1024 : 1);
+				gf_bs_write_u32(bs, codec_ext ? 0 : ptr->bitspersample/8);
+				gf_bs_write_u32(bs, codec_ext ? 0 : ptr->bitspersample/8*ptr->channel_count);
+				gf_bs_write_u32(bs, codec_ext ? 0 : ptr->bitspersample <= 16 ? ptr->bitspersample/8 : 2);
+			}
+		} else if (ptr->version==2) {
+			gf_bs_write_data(bs,  (char *) ptr->extensions, 36);
+		}
+
+		//we consider WAVE/FRMA/ENDA/terminator are only needed for mp4a/ac3/ec3/opus/..., not for raw
+		//qtff spec is quite obscur here
+		if ((ptr->is_qtff==1) && codec_ext) {
+			u64 wave_size = 8 + 12 + 10 + 8;
+
+			wave_size += codec_ext->size;
+
+			gf_bs_write_u32(bs, (u32) wave_size);
+			gf_bs_write_u32(bs, GF_QT_BOX_TYPE_WAVE);
+			gf_bs_write_u32(bs, 12);
+			gf_bs_write_u32(bs, GF_QT_BOX_TYPE_FRMA);
+			gf_bs_write_u32(bs, ptr->type);
+			gf_isom_box_write(codec_ext, bs);
+
+			gf_bs_write_u32(bs, 10);
+			gf_bs_write_u32(bs, GF_QT_BOX_TYPE_ENDA);
+			gf_bs_write_u16(bs, 1);
+			gf_bs_write_u32(bs, 8);
+			gf_bs_write_u32(bs, GF_QT_BOX_TYPE_TERMINATOR);
+		}
 	}
 }
 
 void gf_isom_audio_sample_entry_size(GF_AudioSampleEntryBox *ptr)
 {
 	ptr->size += 28;
-	if (ptr->version==1) {
-		ptr->size+=16;
-	} else if (ptr->version==2) {
-		ptr->size += 36;
+	if (ptr->is_qtff) {
+		GF_Box *codec_ext = NULL;
+		if (ptr->version==1) {
+			ptr->size+=16;
+		} else if (ptr->version==2) {
+			ptr->size += 36;
+		}
+		if (ptr->is_qtff==1) {
+			codec_ext = get_audio_codec_cfg_box(ptr);
+		}
+
+		//we consider WAVE/FRMA/ENDA/terminator are only needed for mp4a/ac3/ec3/opus/..., not for raw
+		//qtff spec is quite obscur here
+		if ((ptr->is_qtff==1) && codec_ext) {
+			//add wave: 12 (frma) +10(enda)+8(term null)+ 8 header for wave
+			ptr->size += 8 + 12 + 10 + 8;
+			if (codec_ext) {
+				gf_isom_box_size(codec_ext);
+				ptr->size += codec_ext->size;
+				ptr->compression_id=-2;
+			}
+		}
 	}
 }
 
@@ -240,7 +313,7 @@ GF_AC3Config *gf_isom_ac3_config_get(GF_ISOFile *the_file, u32 trackNumber, u32 
 
 	entry = (GF_MPEGAudioSampleEntryBox *)gf_list_get(trak->Media->information->sampleTable->SampleDescription->other_boxes, StreamDescriptionIndex-1);
 	if (!entry || !entry->cfg_ac3) return NULL;
-	if ( (entry->type!=GF_ISOM_BOX_TYPE_AC3) && (entry->type!=GF_ISOM_BOX_TYPE_EC3) ) return NULL;
+	if (!entry->cfg_ac3) return NULL;
 	if ( (entry->cfg_ac3->type!=GF_ISOM_BOX_TYPE_DAC3) && (entry->cfg_ac3->type!=GF_ISOM_BOX_TYPE_DEC3) ) return NULL;
 
 	res = (GF_AC3Config*)gf_malloc(sizeof(GF_AC3Config));
@@ -342,6 +415,7 @@ GF_Err gf_isom_3gp_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_3GPConfi
 	return e;
 }
 
+GF_EXPORT
 GF_Err gf_isom_3gp_config_update(GF_ISOFile *the_file, u32 trackNumber, GF_3GPConfig *param, u32 DescriptionIndex)
 {
 	GF_TrackBox *trak;
@@ -458,6 +532,8 @@ GF_Err gf_isom_get_dims_description(GF_ISOFile *movie, u32 trackNumber, u32 desc
 }
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
+
+GF_EXPORT
 GF_Err gf_isom_new_dims_description(GF_ISOFile *movie, u32 trackNumber, GF_DIMSDescription *desc, char *URLname, char *URNname, u32 *outDescriptionIndex)
 {
 	GF_TrackBox *trak;
@@ -506,7 +582,7 @@ GF_Err gf_isom_new_dims_description(GF_ISOFile *movie, u32 trackNumber, GF_DIMSD
 	return e;
 }
 
-
+GF_EXPORT
 GF_Err gf_isom_update_dims_description(GF_ISOFile *movie, u32 trackNumber, GF_DIMSDescription *desc, char *URLname, char *URNname, u32 DescriptionIndex)
 {
 	GF_TrackBox *trak;
@@ -1095,40 +1171,139 @@ GF_Err gf_isom_update_bitrate(GF_ISOFile *movie, u32 trackNumber, u32 sampleDesc
 	GF_BitRateBox *a;
 	GF_Err e;
 	GF_SampleEntryBox *ent;
+	u32 i, count;
 	GF_TrackBox *trak;
-
+	GF_ProtectionSchemeInfoBox *sinf;
 	e = CanAccessMovie(movie, GF_ISOM_OPEN_WRITE);
 	if (e) return GF_BAD_PARAM;
 
 	trak = gf_isom_get_track_from_file(movie, trackNumber);
-	if (!trak || !sampleDescriptionIndex || !trak->Media) return GF_BAD_PARAM;
+	if (!trak || !trak->Media) return GF_BAD_PARAM;
 
-	ent = (GF_SampleEntryBox *)gf_list_get(trak->Media->information->sampleTable->SampleDescription->other_boxes, sampleDescriptionIndex - 1);
-	if (!ent) return GF_BAD_PARAM;
+	count = gf_list_count(trak->Media->information->sampleTable->SampleDescription->other_boxes);
+	for (i=0; i<count; i++) {
+		u32 ent_type;
+		GF_ESDBox *esds=NULL;
+		if (sampleDescriptionIndex && (sampleDescriptionIndex!=i+1)) continue;
 
-	if (!max_bitrate && average_bitrate) max_bitrate = average_bitrate;
-	a = gf_isom_sample_entry_get_bitrate(ent, max_bitrate ? GF_TRUE : GF_FALSE);
+		ent = (GF_SampleEntryBox *)gf_list_get(trak->Media->information->sampleTable->SampleDescription->other_boxes, i);
+		if (!ent) return GF_BAD_PARAM;
 
-	if (!max_bitrate) {
-		if (a) {
-			gf_list_del_item(ent->other_boxes, a);
-			gf_isom_box_del((GF_Box *) a);
-
-			if (!gf_list_count(ent->other_boxes)) {
-				gf_list_del(ent->other_boxes);
-				ent->other_boxes = NULL;
-			}
+		ent_type = ent->type;
+		switch (ent_type) {
+		case GF_ISOM_BOX_TYPE_ENCV:
+		case GF_ISOM_BOX_TYPE_ENCA:
+		case GF_ISOM_BOX_TYPE_ENCS:
+			sinf = gf_list_get(ent->protections, 0);
+			if (sinf && sinf->original_format)
+				ent_type = sinf->original_format->type;
+			break;
 		}
-		return GF_OK;
-	}
+		switch (ent_type) {
+		case GF_ISOM_BOX_TYPE_MP4V:
+			esds = ((GF_MPEGVisualSampleEntryBox *)ent)->esd;
+			break;
+		case GF_ISOM_BOX_TYPE_MP4A:
+			esds = ((GF_MPEGAudioSampleEntryBox *)ent)->esd;
+			break;
+		case GF_ISOM_BOX_TYPE_MP4S:
+			esds = ((GF_MPEGSampleEntryBox *) ent)->esd;
+			break;
+		}
+		//using mpeg4 esd
+		if (esds) {
+			if (esds->desc && esds->desc->decoderConfig) {
+				esds->desc->decoderConfig->avgBitrate = average_bitrate;
+				esds->desc->decoderConfig->maxBitrate = max_bitrate;
+				if (decode_buffer_size)
+					esds->desc->decoderConfig->bufferSizeDB = decode_buffer_size;
+			}
+			continue;
+		}
+		
+		//using BTRT
+		if (!max_bitrate && average_bitrate) max_bitrate = average_bitrate;
+		a = gf_isom_sample_entry_get_bitrate(ent, max_bitrate ? GF_TRUE : GF_FALSE);
 
-	a->avgBitrate = average_bitrate;
-	a->maxBitrate = max_bitrate;
-	a->bufferSizeDB = decode_buffer_size;
+		if (!max_bitrate) {
+			if (a) {
+				gf_list_del_item(ent->other_boxes, a);
+				gf_isom_box_del((GF_Box *) a);
+
+				if (!gf_list_count(ent->other_boxes)) {
+					gf_list_del(ent->other_boxes);
+					ent->other_boxes = NULL;
+				}
+			}
+		} else {
+			a->avgBitrate = average_bitrate;
+			a->maxBitrate = max_bitrate;
+			if (decode_buffer_size)
+				a->bufferSizeDB = decode_buffer_size;
+		}
+	}
 	return GF_OK;
 }
 
 
-#endif /*GPAC_DISABLE_ISOM_WRITE*/
+GF_EXPORT
+GF_Err gf_isom_tmcd_config_new(GF_ISOFile *the_file, u32 trackNumber, u32 fps_num, u32 fps_den, s32 frames_per_counter_tick, Bool is_drop, Bool is_counter, u32 *outDescriptionIndex)
+{
+	GF_TrackBox *trak;
+	GF_Err e;
+	u32 dataRefIndex;
+	GF_Box *tmcd;
+	GF_GenericMediaHeaderInfoBox *gmin;
+	GF_TimeCodeMediaInformationBox *tcmi;
+	GF_TimeCodeSampleEntryBox *entry;
+
+	e = CanAccessMovie(the_file, GF_ISOM_OPEN_WRITE);
+	if (e) return e;
+
+	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	if (!trak || !trak->Media) return GF_BAD_PARAM;
+
+	//get or create the data ref
+	e = Media_FindDataRef(trak->Media->information->dataInformation->dref, NULL, NULL, &dataRefIndex);
+	if (e) return e;
+	if (!dataRefIndex) {
+		e = Media_CreateDataRef(the_file, trak->Media->information->dataInformation->dref, NULL, NULL, &dataRefIndex);
+		if (e) return e;
+	}
+	if (!the_file->keep_utc)
+		trak->Media->mediaHeader->modificationTime = gf_isom_get_mp4time();
+
+	gmin = (GF_GenericMediaHeaderInfoBox *) gf_isom_box_new(GF_QT_BOX_TYPE_GMIN);
+	if (!gmin) return GF_OUT_OF_MEM;
+	gf_isom_box_add_default((GF_Box *)trak->Media->information->InfoHeader, (GF_Box *)gmin);
+
+	//default container box, use GMHD to create it
+	tmcd = gf_isom_box_new(GF_ISOM_BOX_TYPE_GMHD);
+	if (!tmcd) return GF_OUT_OF_MEM;
+	tmcd->type = GF_QT_BOX_TYPE_TMCD;
+	gf_isom_box_add_default((GF_Box *)trak->Media->information->InfoHeader, (GF_Box *)tmcd);
+
+	tcmi = (GF_TimeCodeMediaInformationBox *) gf_isom_box_new(GF_QT_BOX_TYPE_TCMI);
+	if (!tcmi) return GF_OUT_OF_MEM;
+	gf_isom_box_add_default(tmcd, (GF_Box *)tcmi);
+
+	entry = (GF_TimeCodeSampleEntryBox *) gf_isom_box_new_ex(GF_QT_BOX_TYPE_TMCD, GF_ISOM_BOX_TYPE_STSD, GF_FALSE, GF_FALSE);
+	if (!entry) return GF_OUT_OF_MEM;
+	entry->flags = 0;
+	if (is_drop) entry->flags |= 0x00000001;
+	if (is_counter) entry->flags |= 0x00000008;
+
+	entry->timescale = fps_num;
+	entry->frame_duration = fps_den;
+	entry->frames_per_counter_tick = (u8) frames_per_counter_tick;
+	
+	entry->dataReferenceIndex = dataRefIndex;
+	e = gf_list_add(trak->Media->information->sampleTable->SampleDescription->other_boxes, entry);
+	*outDescriptionIndex = gf_list_count(trak->Media->information->sampleTable->SampleDescription->other_boxes);
+	return e;
+}
+#endif	/*GPAC_DISABLE_ISOM_WRITE*/
+
+
 
 #endif /*GPAC_DISABLE_ISOM*/

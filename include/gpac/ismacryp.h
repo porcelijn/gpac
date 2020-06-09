@@ -73,6 +73,8 @@ enum
 	GF_CRYPT_TYPE_CBCS	= GF_4CC('c','b','c','s'),
 	/*Adobe CBC-128 encryption*/
 	GF_CRYPT_TYPE_ADOBE	= GF_4CC('a','d','k','m'),
+	/*PIFF encryption*/
+	GF_CRYPT_TYPE_PIFF	= GF_4CC('p','i','f','f'),
 };
 
 enum
@@ -80,19 +82,21 @@ enum
 	/*no selective encryption*/
 	GF_CRYPT_SELENC_NONE = 0,
 	/*only encrypts RAP samples*/
-	GF_CRYPT_SELENC_RAP = 1,
+	GF_CRYPT_SELENC_RAP,
 	/*only encrypts non-RAP samples*/
-	GF_CRYPT_SELENC_NON_RAP = 2,
+	GF_CRYPT_SELENC_NON_RAP,
 	/*selective encryption of random samples*/
-	GF_CRYPT_SELENC_RAND = 3,
+	GF_CRYPT_SELENC_RAND,
 	/*selective encryption of a random sample in given range*/
-	GF_CRYPT_SELENC_RAND_RANGE = 4,
+	GF_CRYPT_SELENC_RAND_RANGE,
 	/*selective encryption of first sample in given range*/
-	GF_CRYPT_SELENC_RANGE = 5,
+	GF_CRYPT_SELENC_RANGE,
 	/*encryption of all samples but the preview range*/
-	GF_CRYPT_SELENC_PREVIEW = 6,
-	/*encryption of no samples*/
-	GF_CRYPT_SELENC_CLEAR = 7,
+	GF_CRYPT_SELENC_PREVIEW,
+	/*no encryption of samples, signaled as unencrypted sample group for CENC*/
+	GF_CRYPT_SELENC_CLEAR,
+	/*no encryption of samples, NOT signaled as unencrypted sample group for CENC*/
+	GF_CRYPT_SELENC_CLEAR_FORCED
 };
 
 typedef struct
@@ -117,14 +121,14 @@ typedef struct
 	u32 ipmp_desc_id;
 	/*type of box where sample auxiliary informations is saved, or 0 in case of ISMACrypt (it will be written in samples)*/
 	u32 sai_saved_box_type;
-
+	/*force protection scheme specified in crypt file*/
+	Bool force_type;
 	/*OMA extensions*/
 	/*0: none, 1: AES CBC, 2: AES CTR*/
 	u8 encryption;
 	char TextualHeaders[5000];
 	u32 TextualHeadersLen;
 	char TransactionID[17];
-
 	/*CENC extensions*/
 	u32 IsEncrypted;
 	u8 IV_size;
@@ -148,6 +152,11 @@ typedef struct
 	//force cenc and cbc1: 0: default, 1: no block alignment of encrypted data, 2: always block align even if producing non encrypted samples
 	u32 block_align;
 
+	/*0: same stsd for clear samples
+	1: dedicated stsd entry for clear samples, placed before the crypted entry in stsd,
+	2: dedicated stsd entry for clear samples, placed after the crypted entry in stsd,
+	*/
+	u32 force_clear_stsd_idx;
 
 	char metadata[5000];
 	u32 metadata_len;
@@ -160,6 +169,7 @@ typedef struct
 #ifndef GPAC_DISABLE_AV1
 	AV1State av1;
 #endif
+
 	Bool slice_header_clear;
 	Bool is_avc;
 #endif

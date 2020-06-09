@@ -1021,6 +1021,8 @@ typedef struct
 } GF_AV1Config;
 
 
+#define VP9_NUM_REF_FRAMES	8
+
 /*! VP8-9 config vpcC */
 typedef struct
 {
@@ -1038,7 +1040,24 @@ typedef struct
 	/* MUST be 0 for VP8 and VP9 */
 	u16 codec_initdata_size;
 	u8* codec_initdata;
+
+	/* parsing state information - not used for vpcC*/
+	int RefFrameWidth[VP9_NUM_REF_FRAMES];
+	int RefFrameHeight[VP9_NUM_REF_FRAMES];
 } GF_VPConfig;
+
+
+/*! DolbyVision config dvcC */
+typedef struct {
+	u8 dv_version_major;
+	u8 dv_version_minor;
+	u8 dv_profile; //7 bits
+	u8 dv_level;   //6 bits
+	Bool rpu_present_flag;
+	Bool el_present_flag;
+	Bool bl_present_flag;
+	//const unsigned int (32)[5] reserved = 0;
+} GF_DOVIDecoderConfigurationRecord;
 
 /*! Media Segment Descriptor used for Media Control Extensions*/
 typedef struct
@@ -1368,9 +1387,9 @@ GF_Err gf_odf_av1_cfg_write_bs(GF_AV1Config *cfg, GF_BitStream *bs);
 /* VP8-9 descriptors functions */
 GF_VPConfig *gf_odf_vp_cfg_new();
 void gf_odf_vp_cfg_del(GF_VPConfig *cfg);
-GF_Err gf_odf_vp_cfg_write_bs(GF_VPConfig *cfg, GF_BitStream *bs);
-GF_Err gf_odf_vp_cfg_write(GF_VPConfig *cfg, char **outData, u32 *outSize);
-GF_VPConfig *gf_odf_vp_cfg_read_bs(GF_BitStream *bs);
+GF_Err gf_odf_vp_cfg_write_bs(GF_VPConfig *cfg, GF_BitStream *bs, Bool is_v0);
+GF_Err gf_odf_vp_cfg_write(GF_VPConfig *cfg, char **outData, u32 *outSize, Bool is_v0);
+GF_VPConfig *gf_odf_vp_cfg_read_bs(GF_BitStream *bs, Bool is_v0);
 GF_VPConfig *gf_odf_vp_cfg_read(char *dsi, u32 dsi_size);
 
 

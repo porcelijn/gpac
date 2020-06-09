@@ -217,12 +217,13 @@ GF_Err gf_isom_streamer_write_sdp(GF_ISOMRTPStreamer *streamer, char*sdpfilename
 	return gf_isom_streamer_setup_sdp(streamer, sdpfilename, NULL);
 }
 
+GF_EXPORT
 GF_Err gf_isom_streamer_get_sdp(GF_ISOMRTPStreamer *streamer, char **out_sdp_buffer)
 {
 	return gf_isom_streamer_setup_sdp(streamer, NULL, out_sdp_buffer);
 }
 
-
+GF_EXPORT
 void gf_isom_streamer_reset(GF_ISOMRTPStreamer *streamer, Bool is_loop)
 {
 	GF_RTPTrack *track;
@@ -641,6 +642,8 @@ GF_ISOMRTPStreamer *gf_isom_streamer_new(const char *file_name, const char *ip_d
 		gf_isom_get_reference(streamer->isom, track->track_num, GF_ISOM_REF_BASE, 1, &base_track);
 		if (base_track)
 			streamer->base_track = base_track;
+
+		if (dsi) gf_free(dsi);
 	}
 
 	/*if scalable coding is found, disable auto RTCP reports and send them ourselves*/

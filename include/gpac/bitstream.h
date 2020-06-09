@@ -228,6 +228,14 @@ u32 gf_bs_read_u32(GF_BitStream *bs);
  */
 u64 gf_bs_read_u64(GF_BitStream *bs);
 /*!
+*	\brief little endian integer reading
+*
+*	Reads an integer coded on 64 bits in little-endian order.
+*	\param bs the target bitstream
+*	\return the integer value read.
+*/
+u64 gf_bs_read_u64_le(GF_BitStream *bs);
+/*!
  *	\brief little endian integer reading
  *
  *	Reads an integer coded on 32 bits in little-endian order.
@@ -547,7 +555,7 @@ GF_Err gf_bs_transfer(GF_BitStream *dst, GF_BitStream *src);
 
 
 /*!
- *\brief Flushes bitstream contet to disk
+ *\brief Flushes bitstream content to disk
  *
  *Flushes bitstream contet to disk
  *\param bs the target bitstream
@@ -562,6 +570,40 @@ void gf_bs_flush(GF_BitStream *bs);
  *\param stream the new stream to assign
  */
 void gf_bs_reassign(GF_BitStream *bs, FILE *stream);
+
+/*!
+ *\brief Inserts a data block, moving bytes to the end
+ *
+ *Inserts a data block at a given position, pushing all bytes after the insertion point to the end of the stream.
+ This does NOT work if \ref gf_bs_enable_emulation_byte_removal or  \ref gf_bs_new_cbk where used.
+ The position after the call will be the same as before the call. If the position is not the end of the bitstream
+ all bytes after the position will be lost.
+ *\param bs the target bitstream
+ *\param data block to insert
+ *\param size size of the block to insert
+ *\param offset insertion offset from bitstream start
+ *\return error code if any
+ */
+GF_Err gf_bs_insert_data(GF_BitStream *bs, u8 *data, u32 size, u64 offset);
+
+/*!
+ *\brief Sets cookie
+ *
+ *Sets a 64 bit cookie (integer, pointer) on the bitstream, returning the current cookie value
+ *\param bs the target bitstream
+ *\param cookie the new cookie to assign
+ *\return the cookie value before re-assign
+ */
+u64 gf_bs_set_cookie(GF_BitStream *bs, u64 cookie);
+
+/*!
+ *\brief Gets cookie
+ *
+ *Gets the current cookie on the bitstream
+ *\param bs the target bitstream
+ *\return the current cookie value
+ */
+u64 gf_bs_get_cookie(GF_BitStream *bs);
 
 /*! @} */
 

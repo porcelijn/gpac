@@ -30,6 +30,8 @@ mp4_test ()
   return ;;
  *.html* )
   return ;;
+ *.xml* )
+  return ;;
  *.bt )
   return ;;
  *.wrl )
@@ -37,24 +39,37 @@ mp4_test ()
  #only check the logo.png
  */logo.jpg )
   return ;;
- # mkv not supported yet
+ # mkv not supported in < 0.9.0
  *.mkv )
+  return ;;
+ # flac not supported in < 0.9.0
+ *.flac )
+  return ;;
+ # ac3 in mpg not supported in < 0.9.0
+ *ac3.mpg )
   return ;;
  *.jpg )
   do_hint=0 ;;
  *.jpeg )
   do_hint=0 ;;
+ # jp2, mjp2 and m1v disabled
  *.jp2 )
-  do_hint=0 ;;
+  return ;;
+ *.mj2 )
+  return ;;
+ *.m1v )
+  return ;;
  *.av1 )
+  do_hint=0 ;;
+ *.opus )
   do_hint=0 ;;
  *.obu )
   do_hint=0 ;;
+ *vp80* )
+  return ;;
  *.ivf )
   do_hint=0 ;;
  *.png )
-  do_hint=0 ;;
- *.mj2 )
   do_hint=0 ;;
  *.qcp )
   do_play=0 ;;

@@ -49,6 +49,7 @@ enable_fuzzing=0
 fuzz_all=0
 fuzz_duration=60
 no_fuzz_cleanup=0
+skip_next_hash_test=0
 
 current_script=""
 
@@ -274,6 +275,8 @@ for i in $* ; do
  "-keep-avi")
   keep_avi=1;;
  "-keep-tmp")
+  keep_temp_dir=1;;
+ "-tmp")
   keep_temp_dir=1;;
  "-no-hash")
   disable_hash=1;;
@@ -789,12 +792,18 @@ shopt -s nullglob
    HASH_TEST=""
    HASH_NOT_FOUND=0
    HASH_FAIL=0
+   SRC_NOT_FOUND=0
 
    source $i
    nb_test_hash=$((nb_test_hash + 1))
    if [ $HASH_NOT_FOUND -eq 1 ] ; then
     result="$HASH_TEST:HashNotFound $result"
     nb_hash_missing=$((nb_hash_missing + 1))
+    test_exec_na=$((test_exec_na + 1))
+   elif [ $SRC_NOT_FOUND -eq 1 ] ; then
+    result="$HASH_TEST:HashSourceNotFound $result"
+    test_ok=0
+    nb_hash_fail=$((nb_hash_fail + 1))
     test_exec_na=$((test_exec_na + 1))
    elif [ $HASH_FAIL -eq 1 ] ; then
     result="$HASH_TEST:HashFail $result"
@@ -859,6 +868,7 @@ shopt -s nullglob
   log $L_ERR "$TEST_NAME: $result"
  fi
 
+shopt -u nullglob
 }
 
 do_fuzz()
@@ -915,6 +925,7 @@ do_fuzz()
 ret=0
 do_test ()
 {
+  skip_next_hash_test=0
 
   if [ $# -gt 2 ] ; then
    log $L_ERR "> in test $TEST_NAME in script $current_script line $BASH_LINENO"
@@ -994,7 +1005,7 @@ if [ $enable_timeout != 0 ] ; then
 timeout_args="$GNU_TIMEOUT $test_timeout"
 fi
 
-$timeout_args $GNU_TIME -o $stat_subtest -f ' EXECUTION_STATUS="OK"\n RETURN_STATUS=%x\n MEM_TOTAL_AVG=%K\n MEM_RESIDENT_AVG=%t\n MEM_RESIDENT_MAX=%M\n CPU_PERCENT=%P\n CPU_ELAPSED_TIME=%E\n CPU_USER_TIME=%U\n CPU_KERNEL_TIME=%S\n PAGE_FAULTS=%F\n FILE_INPUTS=%I\n SOCKET_MSG_REC=%r\n SOCKET_MSG_SENT=%s' $1 >> $log_subtest 2>&1
+$UNBUFFER $timeout_args $GNU_TIME -o $stat_subtest -f ' EXECUTION_STATUS="OK"\n RETURN_STATUS=%x\n MEM_TOTAL_AVG=%K\n MEM_RESIDENT_AVG=%t\n MEM_RESIDENT_MAX=%M\n CPU_PERCENT=%P\n CPU_ELAPSED_TIME=%E\n CPU_USER_TIME=%U\n CPU_KERNEL_TIME=%S\n PAGE_FAULTS=%F\n FILE_INPUTS=%I\n SOCKET_MSG_REC=%r\n SOCKET_MSG_SENT=%s' $1 >> $log_subtest 2>&1
 rv=$?
 
 echo "SUBTEST_NAME=$2" >> $stat_subtest
@@ -1014,6 +1025,7 @@ if [ $rv -eq 1 ] ; then
    if [ -n "$res_err" ]; then
     echo "Negative test detected, reverting to success (found \"$res_err\" in stderr)" >> $log_subtest
     rv=0
+    skip_next_hash_test=1
     echo "" > $stat_subtest
     break
    fi
@@ -1127,6 +1139,10 @@ fi
 #@do_hash_test: generates a hash for $1 file , compare it to HASH_DIR/$TEST_NAME$2.hash
 do_hash_test ()
 {
+  if [ $skip_next_hash_test = 1 ] ; then
+    skip_next_hash_test=0
+    return
+  fi
 
   if [ $# -gt 2 ] ; then
    log $L_ERR "> in test $TEST_NAME in script $current_script line $BASH_LINENO"
@@ -1176,6 +1192,14 @@ do_hash_test ()
  fi
 
  if [ $generate_hash = 0 ] ; then
+  if [ ! -f $1 ] ; then
+   echo "SRC_NOT_FOUND=1" >> $STATHASH_SH
+   echo "HASH_FAIL=0" >> $STATHASH_SH
+   echo "not found $1"
+   return
+  fi
+
+  echo "SRC_NOT_FOUND=0" >> $STATHASH_SH
   if [ ! -f $ref_hash ] ; then
    echo "HASH_NOT_FOUND=1" >> $STATHASH_SH
    return

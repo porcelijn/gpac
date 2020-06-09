@@ -93,19 +93,30 @@ GF_Err gf_media_get_rfc_6381_codec_name(GF_ISOFile *movie, u32 track, char *szCo
  *Changes pixel aspect ratio for visual tracks if supported. Negative values remove any PAR info
  * \param file target ISOBMF file
  * \param track target track
- * \param ar_num aspect ratio numerator
- * \param ar_den aspect ratio denominator
+ * \param ar_num aspect ratio numerator. A value of 0 removes PAR info, a value of -1 gets info from video bitstream for BOTH num and den
+ * \param ar_den aspect ratio denominator. A value of 0 removes PAR info, a value of -1 gets info from video bitstream for BOTH num and den
+ * \param force_par aspect ratio is always written even when 1:1, otherwise aspect ratio info is removed if 1:1
+ * \param rewrite_par aspect ratio is modified in bitstream. Ignored if ar_num or ar_den are not strictly positive
  * \return error if any
  */
-GF_Err gf_media_change_par(GF_ISOFile *file, u32 track, s32 ar_num, s32 ar_den);
+GF_Err gf_media_change_par(GF_ISOFile *file, u32 track, s32 ar_num, s32 ar_den, Bool force_par, Bool rewrite_bs);
 
 /*!
  *Removes all non rap samples (sync and other RAP sample group info) from the track.
  * \param file target movie
  * \param track target track
+ * \param do_thin if set, removes only non-reference pictures
  * \return error if any
  */
-GF_Err gf_media_remove_non_rap(GF_ISOFile *file, u32 track);
+GF_Err gf_media_remove_non_rap(GF_ISOFile *file, u32 track, Bool non_ref_only);
+
+/*!
+ *updates bitrate info on given track.
+ * \param file target movie
+ * \param track target track
+ */
+void gf_media_update_bitrate(GF_ISOFile *file, u32 track);
+
 #endif
 
 /*! @} */
@@ -178,7 +189,7 @@ enum
 	GF_IMPORT_OVSBR = 1<<14,
 	/*! set subsample information with SVC*/
 	GF_IMPORT_SET_SUBSAMPLES = 1<<15,
-	/*! force to mark non-IDR frmaes with sync data (I slices,) to be marked as sync points points
+	/*! force to mark non-IDR frames with sync data (I slices,) to be marked as sync points points
 	THE RESULTING FILE IS NOT COMPLIANT*/
 	GF_IMPORT_FORCE_SYNC = 1<<16,
 	/*! keep trailing 0 bytes in AU payloads when any*/
@@ -205,7 +216,11 @@ enum
 	GF_IMPORT_KEEP_REFS = 1<<27,
 	/*! keeps AV1 temporal delimiter OBU in the samples*/
 	GF_IMPORT_KEEP_AV1_TEMPORAL_OBU  = 1<<28,
-	
+	/*! imports sample dependencies information*/
+	GF_IMPORT_SAMPLE_DEPS  = 1<<29,
+	/*! when set a default ccst box is used in the sample entry */
+	GF_IMPORT_USE_CCST  = 1<<30,
+
 	/*! when set by user during import, will abort*/
 	GF_IMPORT_DO_ABORT = 1<<31
 };
@@ -362,6 +377,14 @@ typedef struct __track_import
 	struct __program_import_info pg_info[GF_IMPORT_MAX_TRACKS];
 	/*! last error encountered during import, internal to the importer*/
 	GF_Err last_error;
+
+	GF_AudioSampleEntryImportMode asemode;
+
+	Bool audio_roll_change;
+	s16 audio_roll;
+
+	Bool is_alpha;
+	Bool keep_audelim;
 } GF_MediaImporter;
 
 /*!
@@ -377,9 +400,10 @@ GF_Err gf_media_import(GF_MediaImporter *importer);
  \param file target movie
  \param chap_file target chapter file
  \param import_fps specifies the chapter frame rate (optional, ignored if 0 - defaults to 25). Most formats don't use this feature
+ \param for_qt use QT signaling for chapter tracks
  \return error if any
  */
-GF_Err gf_media_import_chapters(GF_ISOFile *file, char *chap_file, Double import_fps);
+GF_Err gf_media_import_chapters(GF_ISOFile *file, char *chap_file, Double import_fps, Bool for_qt);
 
 /*!
   Make the file ISMA compliant: creates ISMA BIFS / OD tracks if needed, and update audio/video IDs
@@ -405,6 +429,13 @@ GF_Err gf_media_make_3gpp(GF_ISOFile *file);
  \return error if any
 */
 GF_Err gf_media_make_psp(GF_ISOFile *file);
+
+/*!
+ adjust file params for QT prores
+ \param file the target movie
+ \return error if any
+*/
+GF_Err gf_media_check_qt_prores(GF_ISOFile *mp4);
 
 /*! @} */
 
@@ -556,6 +587,8 @@ typedef struct
 	Double period_duration;
 	/*! if true, the dasher inputs will open each time the segmentation function is called */
 	Bool no_cache;
+	/*! if true and only one media stream in target segment, the moov will use the media stream timescale*/
+	Bool sscale;
 } GF_DashSegmenterInput;
 
 /*!
@@ -764,9 +797,10 @@ GF_Err gf_dasher_set_segment_marker(GF_DASHSegmenter *dasher, u32 segment_marker
  *	\param enable_sidx enable or disable
  *	\param subsegs_per_sidx number of subsegments per segment
  *	\param daisy_chain_sidx enable daisy chaining of sidx
+ *	\param use_ssix enables ssix generation, level 1 for I-frames, the rest of the segement not  mapped
  *	\return error code if any
 */
-GF_Err gf_dasher_enable_sidx(GF_DASHSegmenter *dasher, Bool enable_sidx, u32 subsegs_per_sidx, Bool daisy_chain_sidx);
+GF_Err gf_dasher_enable_sidx(GF_DASHSegmenter *dasher, Bool enable_sidx, u32 subsegs_per_sidx, Bool daisy_chain_sidx, Bool use_ssix);
 
 /*!
  Sets mode for the dash segmenter.
@@ -841,7 +875,7 @@ typedef enum
 GF_Err gf_dasher_configure_isobmf_default(GF_DASHSegmenter *dasher, Bool no_fragments_defaults, GF_DASHPSSHMode pssh_mode, Bool samplegroups_in_traf, Bool single_traf_per_moof, Bool tfdt_per_traf);
 
 /*!
- Enables insertion of UTC reference in the begining of segments
+ Enables insertion of UTC reference in the beginning of segments
  *	\param dasher the DASH segmenter object
  *	\param insert_utc if set, UTC will be inserted. Default value is disabled.
  *	\return error code if any
@@ -926,9 +960,10 @@ GF_Err gf_dasher_set_cues(GF_DASHSegmenter *dasher, const char *cues_file, Bool 
  Sets ISOBMFF options.
  *	\param dasher the DASH segmenter object
  *	\param mvex_after_traks if true the mvex box will be after the trak boxes
+ *	\param sdtp_in_traf if true the sdtp box will be used in traf instead of trun entry (smooth-like)
  *	\return error code if any
  */
-GF_Err gf_dasher_set_isobmff_options(GF_DASHSegmenter *dasher, Bool mvex_after_traks);
+GF_Err gf_dasher_set_isobmff_options(GF_DASHSegmenter *dasher, Bool mvex_after_traks, Bool sdtp_in_traf);
 
 /*!
  Adds a media input to the DASHer

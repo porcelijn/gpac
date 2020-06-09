@@ -88,6 +88,7 @@ void gf_term_message_ex(GF_Terminal *term, const char *service, const char *mess
 	}
 }
 
+GF_EXPORT
 void gf_term_message(GF_Terminal *term, const char *service, const char *message, GF_Err error)
 {
 	gf_term_message_ex(term, service, message, error, 0);
@@ -1378,6 +1379,7 @@ void gf_term_close_service(GF_Terminal *term, GF_ClientService *ns)
 	gf_term_lock_media_queue(term, 0);
 }
 
+GF_EXPORT
 void gf_term_lock_compositor(GF_Terminal *term, Bool LockIt)
 {
 	gf_sc_lock(term->compositor, LockIt);
@@ -1605,7 +1607,7 @@ static void gf_term_connect_object(GF_Terminal *term, GF_ObjectManager *odm, cha
 			continue;
 
 		/*if service has timeline locked to its parent scene, only reuse it if new object does as well*/
-		if (ns->owner->flags & GF_ODM_INHERIT_TIMELINE) {
+		if (ns->owner && ns->owner->flags & GF_ODM_INHERIT_TIMELINE) {
 			if (!(odm->flags & GF_ODM_INHERIT_TIMELINE)) continue;
 		}
 

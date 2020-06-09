@@ -10,7 +10,7 @@
 <br/>
 <b><span style="Font-Size: 24pt">GPAC Configuration file documentation
 <br/>
-GPAC Version 0.7.2-DEV
+GPAC Version 0.8.0
 </span></b>
 <br/>
 </p>
@@ -117,7 +117,7 @@ Available tools are:
 <li><i>core</i> : libgpac core</li>
 <li><i>coding</i> : bitstream formats (audio, video, scene)</li>
 <li><i>container</i> : container formats (ISO File, MPEG-2 TS, AVI, ...)</li>
-<li><i>network</i> : network data exept RTP trafic</li>
+<li><i>network</i> : network data except RTP trafic</li>
 <li><i>rtp</i> : rtp, rtcp and rtsp trafic</li>
 <li><i>author</i> : authoring tools (hint, import, export)</li>
 <li><i>sync</i> : terminal sync layer</li>
@@ -791,13 +791,14 @@ Selects buffer mode:
 <li>none: uses the  player settings for buffering.</li> 
 </ul>
 </p>
-<b>NetworkAdaptation</b> [value: <i>disabled, bandwidth, buffer</i>]
+<b>NetworkAdaptation</b> [value: <i>disabled, bandwidth, buffer, BBA-0, BOLA_FINITE, BOLA_BASIC, BOLA_U, BOLA_O</i>]
 <p style="text-indent: 5%">
 Sets automatic adaptation logic mode:
 <ul>
 <li>disabled: no adaptation to network condition is used.</li>
 <li>bandwidth: network adaptation is based only on available download rate.</li> 
 <li>buffer: network adaptation is based on available download rate for quality increase and buffer levels for quality drops. Default mode.</li> 
+<li>Other values: use algorithms as defined in their respective papers.</li> 
 </ul>
 
 </p>
@@ -883,6 +884,18 @@ Default is 100.</p>
 <b>UTCShiftATSC</b> [value: <i>unsigned integer</i>]
 <p style="text-indent: 5%">
 Indicates the amount of ms to delay requests for ATSC broadcast. Default value is 1000.</p>
+
+<b>IgnoreXLink</b> [value: <i>yes no</i>]
+<p style="text-indent: 5%">
+Indicates if periods with both xlink and adaptation sets specified should resolve the xlink. Default value is yes.</p>
+
+<b>NoContinuity</b> [value: <i>yes no</i>]
+<p style="text-indent: 5%">
+Disabled period continuity playback (forces flushing all content before next period). Period continutity is only implemented for unmultiplexed files. Default value is no.</p>
+
+<b>XLinkQuery</b> [value: <i>string</i>]
+<p style="text-indent: 5%">
+Specifies a query parameter (without initial '?') to append to xlink on periods. Default value is no value.</p>
 
 <br/><br/>
 

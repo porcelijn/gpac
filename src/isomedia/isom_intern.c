@@ -52,11 +52,12 @@ GF_Err MergeFragment(GF_MovieFragmentBox *moof, GF_ISOFile *mov)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Error: %s not received before merging fragment\n", mov->moov ? "mvex" : "moov" ));
 		return GF_ISOM_INVALID_FILE;
 	}
-	//and all fragments must be continous - we do not throw an error as we may still want to be able to concatenate dependent representations in DASH and
-	//we will likely a-have R1(moofSN 1, 3, 5, 7) plus R2(moofSN 2, 4, 6, 8)
-	if (mov->NextMoofNumber && (mov->NextMoofNumber >= moof->mfhd->sequence_number)) {
-		GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Warning: wrong sequence number: got %d but last one was %d\n", moof->mfhd->sequence_number, mov->NextMoofNumber));
-//		return GF_ISOM_INVALID_FILE;
+	//and all fragments should be continous but:
+	//- dash with dependent representations may likely give R1(moofSN 1, 3, 5, 7) plus R2(moofSN 2, 4, 6, 8)
+	//- smooth muxed in a single file may end up with V(1),A(1), V(2),A(2) ...
+	//we do not throw an error if not as we may still want to be able to concatenate dependent representations in DASH and
+	if (mov->NextMoofNumber && moof->mfhd && (mov->NextMoofNumber >= moof->mfhd->sequence_number)) {
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_CONTAINER, ("[iso file] wrong sequence number: got %d but last one was %d\n", moof->mfhd->sequence_number, mov->NextMoofNumber));
 	}
 
 	base_data_offset = mov->current_top_box_start;
@@ -104,9 +105,11 @@ GF_Err MergeFragment(GF_MovieFragmentBox *moof, GF_ISOFile *mov)
 			if (a->type == GF_ISOM_BOX_TYPE_PSSH) {
 				GF_ProtectionSystemHeaderBox *pssh = (GF_ProtectionSystemHeaderBox *)gf_isom_box_new(GF_ISOM_BOX_TYPE_PSSH);
 				memmove(pssh->SystemID, ((GF_ProtectionSystemHeaderBox *)a)->SystemID, 16);
-				pssh->KID_count = ((GF_ProtectionSystemHeaderBox *)a)->KID_count;
-				pssh->KIDs = (bin128 *)gf_malloc(pssh->KID_count*sizeof(bin128));
-				memmove(pssh->KIDs, ((GF_ProtectionSystemHeaderBox *)a)->KIDs, pssh->KID_count*sizeof(bin128));
+				if (((GF_ProtectionSystemHeaderBox *)a)->KIDs && ((GF_ProtectionSystemHeaderBox *)a)->KID_count > 0) {
+					pssh->KID_count = ((GF_ProtectionSystemHeaderBox *)a)->KID_count;
+					pssh->KIDs = (bin128 *)gf_malloc(pssh->KID_count*sizeof(bin128));
+					memmove(pssh->KIDs, ((GF_ProtectionSystemHeaderBox *)a)->KIDs, pssh->KID_count*sizeof(bin128));
+				}
 				pssh->private_data_size = ((GF_ProtectionSystemHeaderBox *)a)->private_data_size;
 				pssh->private_data = (u8 *)gf_malloc(pssh->private_data_size*sizeof(char));
 				memmove(pssh->private_data, ((GF_ProtectionSystemHeaderBox *)a)->private_data, pssh->private_data_size);
@@ -117,9 +120,11 @@ GF_Err MergeFragment(GF_MovieFragmentBox *moof, GF_ISOFile *mov)
 		}
 	}
 
-	mov->NextMoofNumber = moof->mfhd->sequence_number;
-	//update movie duration
-	if (mov->moov->mvhd->duration < MaxDur) mov->moov->mvhd->duration = MaxDur;
+	if (moof->mfhd) {
+		mov->NextMoofNumber = moof->mfhd->sequence_number;
+		//update movie duration
+		if (mov->moov->mvhd->duration < MaxDur) mov->moov->mvhd->duration = MaxDur;
+	}
 	return GF_OK;
 }
 
@@ -130,6 +135,7 @@ static void FixTrackID(GF_ISOFile *mov)
 	if (gf_list_count(mov->moov->trackList) == 1 && gf_list_count(mov->moof->TrackList) == 1) {
 		GF_TrackFragmentBox *traf = (GF_TrackFragmentBox*)gf_list_get(mov->moof->TrackList, 0);
 		GF_TrackBox *trak = (GF_TrackBox*)gf_list_get(mov->moov->trackList, 0);
+		if (!traf->tfhd || !trak->Header) return;
 		if ((traf->tfhd->trackID != trak->Header->trackID)) {
 			GF_LOG(GF_LOG_WARNING, GF_LOG_CONTAINER, ("[iso file] Warning: trackID of MOOF/TRAF(%u) is not the same as MOOV/TRAK(%u). Trying to fix.\n", traf->tfhd->trackID, trak->Header->trackID));
 			traf->tfhd->trackID = trak->Header->trackID;
@@ -396,8 +402,10 @@ GF_Err gf_isom_parse_movie_boxes(GF_ISOFile *mov, u64 *bytesMissing, Bool progre
 						//we should only parse senc/psec when no saiz/saio is present, otherwise we fetch the info directly
 						if (traf->trex && traf->trex->track && traf->sample_encryption) {
 							GF_TrackBox *trak = GetTrackbyID(mov->moov, traf->tfhd->trackID);
+							trak->current_traf_stsd_idx = traf->tfhd->sample_desc_index ? traf->tfhd->sample_desc_index : traf->trex->def_sample_desc_index;
 							e = senc_Parse(mov->movieFileMap->bs, trak, traf, traf->sample_encryption);
 							if (e) return e;
+							trak->current_traf_stsd_idx = 0;
 						}
 					}
 				} else {
@@ -417,8 +425,8 @@ GF_Err gf_isom_parse_movie_boxes(GF_ISOFile *mov, u64 *bytesMissing, Bool progre
 			} else {
 				/*merge all info*/
 				e = MergeFragment((GF_MovieFragmentBox *)a, mov);
-				if (e) return e;
 				gf_isom_box_del(a);
+				if (e) return e;
 			}
 			break;
 #endif
@@ -659,6 +667,10 @@ void gf_isom_delete_movie(GF_ISOFile *mov)
 	gf_isom_box_array_del(mov->moof_list);
 	if (mov->mfra)
 		gf_isom_box_del((GF_Box*)mov->mfra);
+	if (mov->sidx_pts_store)
+		gf_free(mov->sidx_pts_store);
+	if (mov->sidx_pts_next_store)
+		gf_free(mov->sidx_pts_next_store);
 #endif
 	if (mov->last_producer_ref_time)
 		gf_isom_box_del((GF_Box *) mov->last_producer_ref_time);

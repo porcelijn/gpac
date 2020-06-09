@@ -76,7 +76,7 @@ GF_Err abst_Read(GF_Box *s, GF_BitStream *bs)
 {
 	GF_AdobeBootstrapInfoBox *ptr = (GF_AdobeBootstrapInfoBox *)s;
 	int i;
-	u32 tmp_strsize;
+	u32 tmp_strsize, strsize;
 	char *tmp_str;
 	GF_Err e;
 
@@ -90,8 +90,8 @@ GF_Err abst_Read(GF_Box *s, GF_BitStream *bs)
 	ptr->smpte_time_code_offset = gf_bs_read_u64(bs);
 
 	i=0;
-	if (ptr->size<8) return GF_ISOM_INVALID_FILE;
-	tmp_strsize=(u32)ptr->size-8;
+	if (ptr->size<=8) return GF_ISOM_INVALID_FILE;
+	strsize = tmp_strsize=(u32)ptr->size-8;
 	tmp_str = gf_malloc(sizeof(char)*tmp_strsize);
 
 	while (tmp_strsize) {
@@ -101,8 +101,10 @@ GF_Err abst_Read(GF_Box *s, GF_BitStream *bs)
 			break;
 		i++;
 	}
-	if (i)
+	if (i) {
+		tmp_str[strsize-1] = 0;
 		ptr->movie_identifier = gf_strdup(tmp_str);
+	}
 
 	ptr->server_entry_count = gf_bs_read_u8(bs);
 	for (i=0; i<ptr->server_entry_count; i++) {
@@ -115,6 +117,7 @@ GF_Err abst_Read(GF_Box *s, GF_BitStream *bs)
 				break;
 			j++;
 		}
+		tmp_str[strsize-1] = 0;
 		gf_list_insert(ptr->server_entry_table, gf_strdup(tmp_str), i);
 	}
 
@@ -129,6 +132,7 @@ GF_Err abst_Read(GF_Box *s, GF_BitStream *bs)
 				break;
 			j++;
 		}
+		tmp_str[strsize-1] = 0;
 		gf_list_insert(ptr->quality_entry_table, gf_strdup(tmp_str), i);
 	}
 
@@ -141,8 +145,10 @@ GF_Err abst_Read(GF_Box *s, GF_BitStream *bs)
 			break;
 		i++;
 	}
-	if (i)
+	if (i) {
+		tmp_str[strsize-1] = 0;
 		ptr->drm_data = gf_strdup(tmp_str);
+	}
 
 	i=0;
 	tmp_strsize=(u32)ptr->size-8;
@@ -153,22 +159,32 @@ GF_Err abst_Read(GF_Box *s, GF_BitStream *bs)
 			break;
 		i++;
 	}
-	if (i)
+	if (i) {
+		tmp_str[strsize-1] = 0;
 		ptr->meta_data = gf_strdup(tmp_str);
+	}
 
 	ptr->segment_run_table_count = gf_bs_read_u8(bs);
 	for (i=0; i<ptr->segment_run_table_count; i++) {
-		GF_AdobeSegmentRunTableBox *asrt;
+		GF_AdobeSegmentRunTableBox *asrt = NULL;
 		e = gf_isom_box_parse((GF_Box **)&asrt, bs);
-		if (e) return e;
+		if (e) {
+			if (asrt) gf_isom_box_del((GF_Box*)asrt);
+			gf_free(tmp_str);
+			return e;
+		}
 		gf_list_insert(ptr->segment_run_table_entries, asrt, i);
 	}
 
 	ptr->fragment_run_table_count = gf_bs_read_u8(bs);
 	for (i=0; i<ptr->fragment_run_table_count; i++) {
-		GF_AdobeFragmentRunTableBox *afrt;
+		GF_AdobeFragmentRunTableBox *afrt = NULL;
 		e = gf_isom_box_parse((GF_Box **)&afrt, bs);
-		if (e) return e;
+		if (e) {
+			if (afrt) gf_isom_box_del((GF_Box*)afrt);
+			gf_free(tmp_str);
+			return e;
+		}
 		gf_list_insert(ptr->fragment_run_table_entries, afrt, i);
 	}
 
@@ -177,7 +193,6 @@ GF_Err abst_Read(GF_Box *s, GF_BitStream *bs)
 	return GF_OK;
 }
 
-GF_EXPORT
 GF_Box *abst_New()
 {
 	ISOM_DECL_BOX_ALLOC(GF_AdobeBootstrapInfoBox, GF_ISOM_BOX_TYPE_ABST);
@@ -190,7 +205,6 @@ GF_Box *abst_New()
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 
-GF_EXPORT
 GF_Err abst_Write(GF_Box *s, GF_BitStream *bs)
 {
 	GF_Err e;
@@ -250,7 +264,6 @@ GF_Err abst_Write(GF_Box *s, GF_BitStream *bs)
 	return GF_OK;
 }
 
-GF_EXPORT
 GF_Err abst_Size(GF_Box *s)
 {
 	GF_Err e;
@@ -365,7 +378,6 @@ GF_Err afra_Read(GF_Box *s, GF_BitStream *bs)
 	return GF_OK;
 }
 
-GF_EXPORT
 GF_Box *afra_New()
 {
 	ISOM_DECL_BOX_ALLOC(GF_AdobeFragRandomAccessBox, GF_ISOM_BOX_TYPE_AFRA);
@@ -491,7 +503,6 @@ GF_Err asrt_Read(GF_Box *s, GF_BitStream *bs)
 	return GF_OK;
 }
 
-GF_EXPORT
 GF_Box *asrt_New()
 {
 	ISOM_DECL_BOX_ALLOC(GF_AdobeSegmentRunTableBox, GF_ISOM_BOX_TYPE_ASRT);
@@ -601,7 +612,6 @@ GF_Err afrt_Read(GF_Box *s, GF_BitStream *bs)
 	return GF_OK;
 }
 
-GF_EXPORT
 GF_Box *afrt_New()
 {
 	ISOM_DECL_BOX_ALLOC(GF_AdobeFragmentRunTableBox, GF_ISOM_BOX_TYPE_AFRT);

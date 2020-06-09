@@ -317,6 +317,10 @@ typedef struct
 	Bool xlink_actuate_on_load;
 } GF_MPD_AdaptationSet;
 
+typedef enum {
+	GF_MPD_TYPE_STATIC,
+	GF_MPD_TYPE_DYNAMIC,
+} GF_MPD_Type;
 
 typedef struct
 {
@@ -334,6 +338,8 @@ typedef struct
 	GF_List *subsets;
 	char *xlink_href;
 	Bool xlink_actuate_on_load;
+	char *origin_base_url;
+	GF_MPD_Type type;
 } GF_MPD_Period;
 
 typedef struct
@@ -345,11 +351,6 @@ typedef struct
 	char *more_info_url;
 } GF_MPD_ProgramInfo;
 
-
-typedef enum {
-	GF_MPD_TYPE_STATIC,
-	GF_MPD_TYPE_DYNAMIC,
-} GF_MPD_Type;
 
 typedef struct {
 	MPD_EXTENSIBLE
@@ -396,6 +397,7 @@ void gf_mpd_segment_base_free(void *ptr);
 
 void gf_mpd_period_free(void *_item);
 
+GF_Err gf_mpd_write(GF_MPD const * const mpd, FILE *out);
 GF_Err gf_mpd_write_file(GF_MPD const * const mpd, const char *file_name);
 
 

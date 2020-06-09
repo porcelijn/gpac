@@ -988,6 +988,7 @@ void gf_mpd_period_free(void *_item)
 {
 	GF_MPD_Period *ptr = (GF_MPD_Period *)_item;
 	if (ptr->ID) gf_free(ptr->ID);
+	if (ptr->origin_base_url) gf_free(ptr->origin_base_url);
 	if (ptr->xlink_href) gf_free(ptr->xlink_href);
 	if (ptr->segment_base) gf_mpd_segment_base_free(ptr->segment_base);
 	if (ptr->segment_list) gf_mpd_segment_list_free(ptr->segment_list);
@@ -1110,6 +1111,7 @@ GF_Err gf_mpd_complete_from_dom(GF_XMLNode *root, GF_MPD *mpd, const char *defau
 			MPD_STORE_EXTENSION_NODE(mpd)
 		}
 	}
+
 	return GF_OK;
 }
 
@@ -1495,6 +1497,7 @@ try_next_segment:
 						break;
 					}
 				}
+				if (elt_url) gf_free(elt_url);
 			}
 #endif
 			GF_SAFEALLOC(rep, GF_MPD_Representation);
@@ -1581,12 +1584,15 @@ try_next_segment:
 				byte_range_media_file = elt->url;
 				url->URL = gf_strdup(byte_range_media_file);
 			} else {
-				GF_MPD_BaseURL *url;
-				GF_SAFEALLOC(url, GF_MPD_BaseURL);
-				if (! url) return GF_OUT_OF_MEM;
-				e = gf_list_add(rep->base_URLs, url);
-				if (e) return GF_OUT_OF_MEM;
-				url->URL = gf_strdup(base_url);
+				u32 url_len = (u32) strlen(base_url);
+				if (strncmp(base_url, mpd_file, url_len)) {
+					GF_MPD_BaseURL *url;
+					GF_SAFEALLOC(url, GF_MPD_BaseURL);
+					if (! url) return GF_OUT_OF_MEM;
+					e = gf_list_add(rep->base_URLs, url);
+					if (e) return GF_OUT_OF_MEM;
+					url->URL = gf_strdup(base_url);
+				}
 			}
 
 			GF_SAFEALLOC(rep->segment_list, GF_MPD_SegmentList);
@@ -2351,7 +2357,8 @@ static void gf_mpd_print_period(GF_MPD_Period const * const period, Bool is_dyna
 
 }
 
-static GF_Err gf_mpd_write(GF_MPD const * const mpd, FILE *out)
+GF_EXPORT
+GF_Err gf_mpd_write(GF_MPD const * const mpd, FILE *out)
 {
 	u32 i;
 	GF_MPD_ProgramInfo *info;
@@ -3546,13 +3553,7 @@ GF_Err gf_mpd_load_cues(const char *cues_file, u32 stream_id, u32 *cues_timescal
 				else if (!strcmp(att->name, "dts")) sscanf(att->value, LLD, &cues[cur_cue].dts);
 				else if (!strcmp(att->name, "cts")) sscanf(att->value, LLD, &cues[cur_cue].cts);
 			}
-			//first cue
-			if (!cues[cur_cue].cts && !cues[cur_cue].dts && (cues[cur_cue].sample_num<=1) ) {
-				(*nb_cues)--;
-				GF_LOG(GF_LOG_INFO, GF_LOG_DASH, ("[DASH] cue for first sample found in stream %d, ignoring\n", stream_id));
-			} else {
-				cur_cue++;
-			}
+			cur_cue++;
 		}
 
 

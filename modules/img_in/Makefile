@@ -29,12 +29,12 @@ OBJS=img_dec.o img_in.o bmp_dec.o png_dec.o jpeg_dec.o
 ifeq ($(CONFIG_JP2), no)
 else
 OBJS+=jp2_dec.o
-LINKLIBS+= -lopenjpeg
+LINKLIBS+= -lopenjpeg -lm
 CFLAGS+=-DGPAC_HAS_JP2
 #local openjpeg lib
 ifeq ($(CONFIG_JP2), local)
 NEED_LOCAL_LIB="yes"
-CFLAGS+= -I"$(LOCAL_INC_PATH)/openjpeg"
+CFLAGS+= -DOPJ_STATIC -I"$(LOCAL_INC_PATH)/openjpeg"
 endif
 endif
 
@@ -46,12 +46,12 @@ endif
 
 
 
-SRCS := $(OBJS:.o=.c) 
+SRCS := $(OBJS:.o=.c)
 
 LIB=gm_img_in$(DYN_LIB_SUFFIX)
 ifeq ($(CONFIG_WIN32),yes)
 LINKLIBS+=-lwinmm
-#LDFLAGS+=-export-symbols img_in.def 
+#LDFLAGS+=-export-symbols img_in.def
 endif
 
 all: $(LIB)
@@ -63,13 +63,13 @@ ifeq ($(STATICBUILD),yes)
 	$(CC) $(SHFLAGS) -o ../../bin/gcc/gm_img_in-static$(DYN_LIB_SUFFIX) $(OBJS) $(EXTRALIBS) -L$(LOCAL_LIB) $(LINKLIBS) $(LDFLAGS)
 endif
 
-clean: 
+clean:
 	rm -f $(OBJS) ../../bin/gcc/$(LIB)
 
 dep: depend
 
 depend:
-	rm -f .depend	
+	rm -f .depend
 	$(CC) -MM $(CFLAGS) $(SRCS) 1>.depend
 
 distclean: clean

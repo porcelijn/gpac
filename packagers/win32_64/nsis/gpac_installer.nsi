@@ -1,6 +1,6 @@
 ;--------------------------------
 ;General
-!define GPAC_VERSION 0.7.2-DEV
+!define GPAC_VERSION 0.8.0
 !include default.out
 
 !define GPAC_ROOT ..\..\..
@@ -362,7 +362,6 @@ Section "FFMPEG" SecFFMPEG
   File "${GPAC_BIN}\avfilter-*.dll"
   File "${GPAC_BIN}\avformat-*.dll"
   File "${GPAC_BIN}\avutil-*.dll"
-  File "${GPAC_BIN}\avresample-*.dll"
   File "${GPAC_BIN}\swresample-*.dll"
   File "${GPAC_BIN}\swscale-*.dll"
   File "${GPAC_BIN}\libx264-*.dll"

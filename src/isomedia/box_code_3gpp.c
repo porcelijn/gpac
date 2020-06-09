@@ -338,8 +338,9 @@ GF_Err text_Read(GF_Box *s, GF_BitStream *bs)
 	gf_bs_read_data(bs, ptr->foreground_color, 6);	/*Foreground color*/
 	ISOM_DECREASE_SIZE(ptr, 51);
 
+	/*ffmpeg compatibility with iPod streams: no pascal string*/
 	if (!ptr->size)
-		return GF_OK; /*ffmpeg compatibility with iPod streams: no pascal string*/
+		return GF_OK;
 
 	pSize = gf_bs_read_u8(bs); /*a Pascal string begins with its size: get textName size*/
 	ISOM_DECREASE_SIZE(ptr, 1);
@@ -382,8 +383,7 @@ GF_Err text_Read(GF_Box *s, GF_BitStream *bs)
 		ptr->textName[pSize] = '\0';				/*Font name*/
 	}
 	ISOM_DECREASE_SIZE(ptr, pSize);
-
-	return GF_OK;
+	return gf_isom_box_array_read(s, bs, gf_isom_box_add_default);
 }
 
 void gpp_write_rgba(GF_BitStream *bs, u32 col)
@@ -996,7 +996,7 @@ GF_Err dimC_Read(GF_Box *s, GF_BitStream *bs)
 
 	i=0;
 	str[0]=0;
-	while (1) {
+	while (i < ARRAY_LENGTH(str)) {
 		str[i] = gf_bs_read_u8(bs);
 		if (!str[i]) break;
 		i++;
@@ -1007,7 +1007,7 @@ GF_Err dimC_Read(GF_Box *s, GF_BitStream *bs)
 
 	i=0;
 	str[0]=0;
-	while (1) {
+	while (i < ARRAY_LENGTH(str)) {
 		str[i] = gf_bs_read_u8(bs);
 		if (!str[i]) break;
 		i++;
@@ -1022,7 +1022,7 @@ GF_Err dimC_Read(GF_Box *s, GF_BitStream *bs)
 GF_Err dimC_Write(GF_Box *s, GF_BitStream *bs)
 {
 	GF_DIMSSceneConfigBox *p = (GF_DIMSSceneConfigBox *)s;
-	GF_Err e = gf_isom_full_box_write(s, bs);
+	GF_Err e = gf_isom_box_write_header(s, bs);
 	if (e) return e;
 	gf_bs_write_u8(bs, p->profile);
 	gf_bs_write_u8(bs, p->level);

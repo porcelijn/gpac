@@ -2,7 +2,7 @@
  *					GPAC Multimedia Framework
  *
  *			Authors: Cyril Concolato - Jean le Feuvre
- *			Copyright (c) Telecom ParisTech 2005-2012
+ *			Copyright (c) Telecom ParisTech 2005-2019
  *					All rights reserved
  *
  *  This file is part of GPAC / ISO Media File Format sub-project
@@ -426,7 +426,7 @@ u32 gf_isom_get_meta_primary_item_id(GF_ISOFile *file, Bool root_meta, u32 track
 GF_EXPORT
 GF_Err gf_isom_set_meta_type(GF_ISOFile *file, Bool root_meta, u32 track_num, u32 metaType)
 {
-	char szName[20];
+	char szName[40];
 	GF_MetaBox *meta;
 
 	GF_Err e = CanAccessMovie(file, GF_ISOM_OPEN_WRITE);
@@ -529,7 +529,7 @@ GF_Err gf_isom_set_meta_xml(GF_ISOFile *file, Bool root_meta, u32 track_num, cha
 	xmlfile = gf_fopen(XMLFileName, "rb");
 	if (!xmlfile) return GF_URL_ERROR;
 	gf_fseek(xmlfile, 0, SEEK_END);
-	assert(gf_ftell(xmlfile) < 1<<31);
+	assert(gf_ftell(xmlfile) < (u64)1<<31);
 	length = (u32) gf_ftell(xmlfile);
 	gf_fseek(xmlfile, 0, SEEK_SET);
 	xml->xml = (char*)gf_malloc(sizeof(unsigned char)*(length+1));
@@ -546,6 +546,7 @@ GF_Err gf_isom_set_meta_xml(GF_ISOFile *file, Bool root_meta, u32 track_num, cha
 	return GF_OK;
 }
 
+GF_EXPORT
 GF_Err gf_isom_set_meta_xml_memory(GF_ISOFile *file, Bool root_meta, u32 track_num, unsigned char *data, u32 data_size, Bool IsBinaryXML)
 {
 	GF_Err e;
@@ -619,6 +620,17 @@ GF_Err gf_isom_get_meta_image_props(GF_ISOFile *file, Bool root_meta, u32 track_
 					prop->vSpacing = pasp->vSpacing;
 				}
 				break;
+				case GF_ISOM_BOX_TYPE_PIXI:
+				{
+					GF_PixelInformationPropertyBox *pixi = (GF_PixelInformationPropertyBox *)b;
+					if (pixi->num_channels > 3) {
+						return GF_BAD_PARAM;
+					}
+					prop->num_channels = pixi->num_channels;
+					memset(prop->bits_per_channel, 0, 3);
+					memcpy(prop->bits_per_channel, pixi->bits_per_channel, pixi->num_channels);
+				}
+				break;
 				case GF_ISOM_BOX_TYPE_IROT:
 				{
 					GF_ImageRotationBox *irot = (GF_ImageRotationBox *)b;
@@ -675,6 +687,20 @@ static s32 meta_find_prop(GF_ItemPropertyContainerBox *boxes, GF_ImageItemProper
 			}
 		}
 		break;
+		case GF_ISOM_BOX_TYPE_PIXI:
+		{
+			GF_PixelInformationPropertyBox *pixi = (GF_PixelInformationPropertyBox *)b;
+			if (prop->num_channels && pixi->num_channels == prop->num_channels) {
+				int j;
+				for (j = 0; j < pixi->num_channels; j++) {
+					if (pixi->bits_per_channel[j] != prop->bits_per_channel[j]) {
+						break;
+					}
+				}
+				return i;
+			}
+		}
+		break;
 		default:
 			if (gf_isom_box_equal(prop->config, b)) {
 				return i;
@@ -712,7 +738,7 @@ static void meta_add_item_property_association(GF_ItemPropertyAssociationBox *ip
 	gf_list_add(found_entry->essential, ess);
 	gf_list_add(found_entry->property_index, index);
 }
-	
+
 static void meta_process_image_properties(GF_MetaBox *meta, u32 item_ID, GF_ImageItemProperties *image_props) {
 	GF_ImageItemProperties searchprop;
 	GF_ItemPropertyAssociationBox *ipma;
@@ -743,7 +769,7 @@ static void meta_process_image_properties(GF_MetaBox *meta, u32 item_ID, GF_Imag
 			fseek(fp,0,SEEK_SET);
 			colr->opaque = malloc(colr->opaque_size);
 			read = gf_fread(colr->opaque, 1, colr->opaque_size, fp);
-			fclose(fp);
+			gf_fclose(fp);
 			if (ferror(fp) || read != colr->opaque_size) {
 				GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[iso file] Error reading ICC colour profile from file %s\n", &image_props->iccPath));
 			} else {
@@ -821,6 +847,34 @@ static void meta_process_image_properties(GF_MetaBox *meta, u32 item_ID, GF_Imag
 			prop_index = gf_list_count(ipco->other_boxes) - 1;
 		}
 		meta_add_item_property_association(ipma, item_ID, prop_index + 1, GF_TRUE);
+		searchprop.config = NULL;
+	}
+	if (image_props->alpha) {
+		searchprop.alpha = image_props->alpha;
+		prop_index = meta_find_prop(ipco, &searchprop);
+		if (prop_index < 0) {
+			GF_AuxiliaryTypePropertyBox *auxC = (GF_AuxiliaryTypePropertyBox *)gf_isom_box_new(GF_ISOM_BOX_TYPE_AUXC);
+			auxC->aux_urn = gf_strdup("urn:mpeg:mpegB:cicp:systems:auxiliary:alpha");
+			gf_list_add(ipco->other_boxes, auxC);
+			prop_index = gf_list_count(ipco->other_boxes) - 1;
+		}
+		meta_add_item_property_association(ipma, item_ID, prop_index + 1, GF_TRUE);
+		searchprop.alpha = GF_FALSE;
+	}
+	if (image_props->num_channels) {
+		searchprop.num_channels = image_props->num_channels;
+		memcpy(searchprop.bits_per_channel, image_props->bits_per_channel, 3);
+		prop_index = meta_find_prop(ipco, &searchprop);
+		if (prop_index < 0) {
+			GF_PixelInformationPropertyBox *pixi = (GF_PixelInformationPropertyBox *)gf_isom_box_new(GF_ISOM_BOX_TYPE_PIXI);
+			pixi->num_channels = image_props->num_channels;
+			pixi->bits_per_channel = gf_malloc(pixi->num_channels);
+			memcpy(pixi->bits_per_channel, image_props->bits_per_channel, image_props->num_channels);
+			gf_list_add(ipco->other_boxes, pixi);
+			prop_index = gf_list_count(ipco->other_boxes) - 1;
+		}
+		meta_add_item_property_association(ipma, item_ID, prop_index + 1, GF_TRUE);
+		searchprop.num_channels = 0;
 	}
 }
 
@@ -1060,6 +1114,7 @@ GF_Err gf_isom_add_meta_item(GF_ISOFile *file, Bool root_meta, u32 track_num, Bo
 	return gf_isom_add_meta_item_extended(file, root_meta, track_num, self_reference, resource_path, item_name, item_id, item_type, mime_type, content_encoding, image_props, URL, URN, NULL, 0, NULL);
 }
 
+GF_EXPORT
 GF_Err gf_isom_add_meta_item_memory(GF_ISOFile *file, Bool root_meta, u32 track_num, const char *item_name, u32 item_id, u32 item_type, const char *mime_type, const char *content_encoding, GF_ImageItemProperties *image_props, char *data, u32 data_len, GF_List *item_extent_refs)
 {
 	return gf_isom_add_meta_item_extended(file, root_meta, track_num, GF_FALSE, NULL, item_name, item_id, item_type, mime_type, content_encoding, image_props, NULL, NULL, data, data_len, item_extent_refs);

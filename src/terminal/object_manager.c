@@ -91,6 +91,13 @@ void gf_odm_del(GF_ObjectManager *odm)
 	}
 	if (odm->lower_layer_odm) {
 		odm->lower_layer_odm->upper_layer_odm = NULL;
+		if (odm->lower_layer_odm->codec) {
+			GF_CodecCapability cap;
+			//switch off enhancement layer
+			cap.CapCode = GF_CODEC_MEDIA_LAYER_DETACH;
+			cap.cap.valueInt = 0;
+			gf_codec_set_capability(odm->lower_layer_odm->codec, cap);
+		}
 	}
 	/*make sure we are not in the media queue*/
 	gf_term_lock_media_queue(odm->term, GF_TRUE);
@@ -1093,7 +1100,7 @@ GF_Err gf_odm_setup_es(GF_ObjectManager *odm, GF_ESD *esd, GF_ClientService *ser
 	/*if OCR stream force self-synchro !!*/
 	if (esd->decoderConfig->streamType==GF_STREAM_OCR) clockID = esd->ESID;
 	if (!clockID) {
-		/*if no clock ID but depandancy, force the clock to be the base layer for AV but not systems (animation streams, ..)*/
+		/*if no clock ID but dependency, force the clock to be the base layer for AV but not systems (animation streams, ..)*/
 		if ((esd->decoderConfig->streamType==GF_STREAM_VISUAL) || (esd->decoderConfig->streamType==GF_STREAM_AUDIO)) clockID = esd->dependsOnESID;
 		if (!clockID) clockID = esd->ESID;
 	}

@@ -8,6 +8,10 @@ COUNTERFILE=$EXTERNAL_MEDIA_DIR/counter/counter_1280_720_I_25_tiled_500kb.hevc
 
 test_begin "iff"
 
+ if [ $test_skip  = 1 ] ; then
+  return
+ fi
+
 iff_file="$TEMP_DIR/basic.heic"
 do_test "$MP4BOX -add-image $COUNTERFILE -ab heic -new $iff_file" "create-iff-basic"
 do_hash_test $iff_file "create-iff-basic"
@@ -62,5 +66,12 @@ iff_tile_file="$TEMP_DIR/tiled.heic"
 do_test "$MP4BOX -add-image $COUNTERFILE:split_tiles:primary -ab heic -new $iff_tile_file" "create-iff-tiled"
 do_hash_test $iff_tile_file "create-iff-tiled"
 do_test "$MP4BOX -diso $iff_tile_file" "diso-iff-tiled"
+
+#test pict video handler + add image
+iff_file="$TEMP_DIR/vidseq.heic"
+do_test "$MP4BOX -add $COUNTERFILE:hdlr=pict -ab heic -new $iff_file" "create-pict-heif"
+do_hash_test $iff_file "create-pict-heif"
+do_test "$MP4BOX -add-image $COUNTERFILE:primary $iff_file" "add-image-pict"
+do_hash_test $iff_file "add-image-pict"
 
 test_end

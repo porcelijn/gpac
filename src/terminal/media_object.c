@@ -192,7 +192,7 @@ GF_MediaObject *gf_mo_register(GF_Node *node, MFURL *url, Bool lock_timelines, B
 	return res;
 }
 
-
+GF_EXPORT
 void gf_mo_unregister(GF_Node *node, GF_MediaObject *mo)
 {
 	if (mo && node) {
@@ -1300,6 +1300,13 @@ Bool gf_mo_is_muted(GF_MediaObject *mo)
 	gf_odm_lock(mo->odm, 0);
 #endif
 	return res;
+}
+
+GF_EXPORT
+Bool gf_mo_is_started(GF_MediaObject *mo)
+{
+	if (mo && mo->odm && mo->odm->codec && gf_clock_is_started(mo->odm->codec->ck)) return GF_TRUE;
+	return GF_FALSE;
 }
 
 GF_EXPORT

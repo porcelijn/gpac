@@ -399,7 +399,7 @@ static GF_Err ReadGF_IPMPX_MutualAuthentication(GF_BitStream *bs, GF_IPMPX_Data 
 	if (requestNegotiation) {
 		count = gf_bs_read_int(bs, 8);
 		for (i=0; i<count; i++) {
-			GF_IPMPX_Authentication *auth;
+			GF_IPMPX_Authentication *auth = NULL;
 			e = GF_IPMPX_AUTH_Parse(bs, &auth);
 			if (e) return e;
 			gf_list_add(p->candidateAlgorithms, auth);
@@ -408,7 +408,7 @@ static GF_Err ReadGF_IPMPX_MutualAuthentication(GF_BitStream *bs, GF_IPMPX_Data 
 	if (successNegotiation) {
 		count = gf_bs_read_int(bs, 8);
 		for (i=0; i<count; i++) {
-			GF_IPMPX_Authentication *auth;
+			GF_IPMPX_Authentication *auth = NULL;
 			e = GF_IPMPX_AUTH_Parse(bs, &auth);
 			if (e) return e;
 			gf_list_add(p->agreedAlgorithms, auth);
@@ -1065,6 +1065,8 @@ static GF_Err ReadGF_IPMPX_AddToolNotificationListener(GF_BitStream *bs, GF_IPMP
 	p->scope = gf_bs_read_int(bs, 3);
 	gf_bs_read_int(bs, 5);
 	p->eventTypeCount = gf_bs_read_int(bs, 8);
+	if (p->eventTypeCount > ARRAY_LENGTH(p->eventType))
+		return GF_ISOM_INVALID_FILE;
 	for (i=0; i<p->eventTypeCount; i++) p->eventType[i] = gf_bs_read_int(bs, 8);
 	return GF_OK;
 }
@@ -1096,8 +1098,14 @@ static void DelGF_IPMPX_RemoveToolNotificationListener(GF_IPMPX_Data *_p)
 static GF_Err ReadGF_IPMPX_RemoveToolNotificationListener(GF_BitStream *bs, GF_IPMPX_Data *_p, u32 size)
 {
 	u32 i;
+	u8 count;
 	GF_IPMPX_RemoveToolNotificationListener*p = (GF_IPMPX_RemoveToolNotificationListener*)_p;
-	p->eventTypeCount = gf_bs_read_int(bs, 8);
+	p->eventTypeCount = 0;
+	count = gf_bs_read_int(bs, 8);
+	if (count > ARRAY_LENGTH(p->eventType))
+		return GF_CORRUPTED_DATA;
+
+	p->eventTypeCount = count;
 	for (i=0; i<p->eventTypeCount; i++) p->eventType[i] = gf_bs_read_int(bs, 8);
 	return GF_OK;
 }
@@ -1507,7 +1515,7 @@ static GF_Err ReadGF_IPMPX_WatermarkingInit(GF_BitStream *bs, GF_IPMPX_Data *_p,
 	}
 	if (has_opaque_data) {
 		p->opaqueDataSize = gf_bs_read_int(bs, 16);
-		p->opaqueData = (char*)gf_malloc(sizeof(u8) * p->wmPayloadLen);
+		p->opaqueData = (char*)gf_malloc(sizeof(u8) * p->opaqueDataSize);
 		gf_bs_read_data(bs, p->opaqueData, p->opaqueDataSize);
 	}
 	return GF_OK;

@@ -58,7 +58,7 @@ static GF_Err gf_export_message(GF_MediaExporter *dumper, GF_Err e, char *format
 		va_list args;
 		char szMsg[1024];
 		va_start(args, format);
-		vsprintf(szMsg, format, args);
+		vsnprintf(szMsg, 1024, format, args);
 		va_end(args);
 		GF_LOG((u32) (e ? GF_LOG_ERROR : GF_LOG_WARNING), GF_LOG_AUTHOR, ("%s\n", szMsg) );
 	}
@@ -776,7 +776,6 @@ GF_Err gf_media_export_native(GF_MediaExporter *dumper)
 	QCPRateTable rtable[8];
 	Bool is_stdout = GF_FALSE;
 	Bool is_webvtt = GF_FALSE;
-
 	dsi_size = 0;
 	dsi = NULL;
 	hevccfg = NULL;
@@ -916,7 +915,7 @@ GF_Err gf_media_export_native(GF_MediaExporter *dumper)
 				break;
 			case GPAC_OTI_AUDIO_AAC_MPEG4:
 				if (!dcfg->decoderSpecificInfo) {
-					gf_export_message(dumper, GF_OK, "Could not extracting MPEG-4 AAC: descriptor not found");
+					gf_export_message(dumper, GF_OK, "Could not extract MPEG-4 AAC: descriptor specific info not found");
 					gf_odf_desc_del((GF_Descriptor *) dcfg);
 					return GF_NON_COMPLIANT_BITSTREAM;
 				}
@@ -1286,7 +1285,6 @@ GF_Err gf_media_export_native(GF_MediaExporter *dumper)
 
 		/* Start writing the stream out */
 		bs = gf_bs_from_file(out, GF_BITSTREAM_WRITE);
-		gf_bs_write_data(bs, dsi, dsi_size);
 	} else {
 		/* Start writing the stream out */
 		gf_bs_del(bs);
@@ -1411,6 +1409,11 @@ GF_Err gf_media_export_native(GF_MediaExporter *dumper)
 		qcp_type = needs_rate_octet ? 1 : 0;
 	}
 
+	if (qcp_type || (m_stype == GF_ISOM_SUBTYPE_AV01) || aac_mode || avccfg || svccfg || mvccfg || hevccfg || lhvccfg) {
+	} else {
+		gf_isom_enable_raw_pack(dumper->file, track, 2048);
+	}
+
 	/* Start exporting samples */
 	for (i=0; i<count; i++) {
 		GF_ISOSample *samp = gf_isom_get_sample(dumper->file, track, i+1, &di);
@@ -1421,6 +1424,9 @@ GF_Err gf_media_export_native(GF_MediaExporter *dumper)
 		/*AVC sample to NALU*/
 		if (avccfg || svccfg || mvccfg || hevccfg || lhvccfg) {
 			u32 j, nal_size, remain, nal_unit_size;
+			Bool is_rap;
+			Bool has_aud = GF_FALSE;
+			Bool write_dsi = GF_FALSE;
 			char *ptr = samp->data;
 			nal_unit_size = 0;
 			if (avccfg) nal_unit_size= avccfg->nal_unit_size;
@@ -1429,12 +1435,25 @@ GF_Err gf_media_export_native(GF_MediaExporter *dumper)
 			else if (hevccfg) nal_unit_size = hevccfg->nal_unit_size;
 			else if (lhvccfg) nal_unit_size = lhvccfg->nal_unit_size;
 
-			if (i && dsi && samp->IsRAP) {
-				gf_bs_write_data(bs, dsi, dsi_size);
+			is_rap = samp->IsRAP;
+			//patch for opengop
+			if (!is_rap) {
+				gf_isom_get_sample_rap_roll_info(dumper->file, track, i+1, &is_rap, NULL, NULL);
+
+				if (!is_rap) {
+					u32 is_leading, dependsOn, dependedOn, redundant;
+					gf_isom_get_sample_flags(dumper->file, track, i+1, &is_leading, &dependsOn, &dependedOn, &redundant);
+					if (dependsOn==2) is_rap = GF_TRUE;
+				}
+			}
+
+			if (dsi && (is_rap || !i) ) {
+				write_dsi = GF_TRUE;
 			}
 
 			remain = samp->dataLength;
 			while (remain) {
+				Bool is_aud = GF_FALSE;
 				nal_size = 0;
 				if (remain<nal_unit_size) {
 					GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("Sample %d (size %d): Corrupted NAL Unit: header size %d - bytes left %d\n", i+1, samp->dataLength, nal_unit_size, remain) );
@@ -1446,11 +1465,58 @@ GF_Err gf_media_export_native(GF_MediaExporter *dumper)
 					remain--;
 					ptr++;
 				}
-				gf_bs_write_u32(bs, 1);
+
 				if (remain < nal_size) {
 					GF_LOG(GF_LOG_ERROR, GF_LOG_AUTHOR, ("Sample %d (size %d): Corrupted NAL Unit: size %d - bytes left %d\n", i+1, samp->dataLength, nal_size, remain) );
 					nal_size = remain;
 				}
+
+				if (avccfg || svccfg || mvccfg) {
+					u8 nal_type = ptr[0] & 0x1F;
+					if (nal_type==GF_AVC_NALU_ACCESS_UNIT) is_aud = GF_TRUE;
+				} else {
+					u8 nal_type = (ptr[0] & 0x7E) >> 1;
+					if (nal_type==GF_HEVC_NALU_ACCESS_UNIT) is_aud = GF_TRUE;
+				}
+
+				if (is_aud) {
+					if (!has_aud) {
+						gf_bs_write_u32(bs, 1);
+						gf_bs_write_data(bs, ptr, nal_size);
+						has_aud = GF_TRUE;
+					}
+					ptr += nal_size;
+					remain -= nal_size;
+					continue;
+				}
+
+				if (!has_aud) {
+					has_aud = GF_TRUE;
+					gf_bs_write_u32(bs, 1);
+					if (avccfg || svccfg || mvccfg) {
+						u32 hdr = ptr[0] & 0x60;
+						hdr |= GF_AVC_NALU_ACCESS_UNIT;
+						gf_bs_write_u8(bs, hdr);
+						gf_bs_write_u8(bs, 0xF0);
+					} else {
+						//just copy the current nal header, patching the nal type to AU delim
+						u32 hdr = ptr[0] & 0x81;
+						hdr |= GF_HEVC_NALU_ACCESS_UNIT << 1;
+						gf_bs_write_u8(bs, hdr);
+						gf_bs_write_u8(bs, ptr[1]);
+
+						/*pic-type - by default we signal all slice types possible*/
+						gf_bs_write_int(bs, 2, 3);
+						gf_bs_write_int(bs, 0, 5);
+					}
+				}
+
+				if (write_dsi) {
+					write_dsi = GF_FALSE;
+					gf_bs_write_data(bs, dsi, dsi_size);
+				}
+
+				gf_bs_write_u32(bs, 1);
 				gf_bs_write_data(bs, ptr, nal_size);
 				ptr += nal_size;
 				remain -= nal_size;
@@ -1489,6 +1555,9 @@ GF_Err gf_media_export_native(GF_MediaExporter *dumper)
 		if (!avccfg && !svccfg && !mvccfg && !hevccfg && !lhvccfg &!is_webvtt) {
 			gf_bs_write_data(bs, samp->data, samp->dataLength);
 		}
+		if (samp->nb_pack)
+			i += samp->nb_pack-1;
+
 		gf_isom_sample_del(&samp);
 		gf_set_progress("Media Export", i+1, count);
 		if (dumper->flags & GF_EXPORT_DO_ABORT) break;
@@ -2288,6 +2357,8 @@ GF_Err gf_media_export_nhml(GF_MediaExporter *dumper, Bool dims_doc)
 			const char *mime, *encoding, *config, *namespace, *location;
 			switch (mstype) {
 			case GF_ISOM_SUBTYPE_METT:
+			case GF_ISOM_SUBTYPE_SBTT:
+			case GF_ISOM_BOX_TYPE_STXT:
 				if (gf_isom_stxt_get_description(dumper->file, track, 1, &mime, &encoding, &config) == GF_OK) {
 					if (mime)
 						fprintf(nhml, "mime_type=\"%s\" ", mime);
@@ -2427,7 +2498,7 @@ GF_Err gf_media_export_nhml(GF_MediaExporter *dumper, Bool dims_doc)
 			gf_bs_del(bs);
 
 		} else {
-			fprintf(nhml, "<NHNTSample DTS=\""LLU"\" dataLength=\"%d\" ", LLU_CAST samp->DTS, samp->dataLength);
+			fprintf(nhml, "<NHNTSample number=\"%d\" DTS=\""LLU"\" dataLength=\"%d\" ", i+1, LLU_CAST samp->DTS, samp->dataLength);
 			if (full_dump || samp->CTS_Offset) fprintf(nhml, "CTSOffset=\"%u\" ", samp->CTS_Offset);
 			if (samp->IsRAP==RAP) fprintf(nhml, "isRAP=\"yes\" ");
 			else if (samp->IsRAP==RAP_REDUNDANT) fprintf(nhml, "isSyncShadow=\"yes\" ");

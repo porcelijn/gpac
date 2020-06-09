@@ -220,14 +220,16 @@ static void format_sax_error(GF_SAXParser *parser, u32 linepos, const char* fmt,
 	char szM[20];
 
 	va_start(args, fmt);
-	vsprintf(parser->err_msg, fmt, args);
+	vsnprintf(parser->err_msg, ARRAY_LENGTH(parser->err_msg), fmt, args);
 	va_end(args);
 
-	sprintf(szM, " - Line %d: ", parser->line + 1);
-	strcat(parser->err_msg, szM);
-	len = (u32) strlen(parser->err_msg);
-	strncpy(parser->err_msg + len, parser->buffer+ (linepos ? linepos : parser->current_pos), 10);
-	parser->err_msg[len + 10] = 0;
+	if (strlen(parser->err_msg)+30 < ARRAY_LENGTH(parser->err_msg)) {
+		snprintf(szM, 20, " - Line %d: ", parser->line + 1);
+		strcat(parser->err_msg, szM);
+		len = (u32) strlen(parser->err_msg);
+		strncpy(parser->err_msg + len, parser->buffer+ (linepos ? linepos : parser->current_pos), 10);
+		parser->err_msg[len + 10] = 0;
+	}
 	parser->sax_state = SAX_STATE_SYNTAX_ERROR;
 }
 
@@ -376,7 +378,7 @@ static Bool xml_sax_parse_attribute(GF_SAXParser *parser)
 					/*end of <!DOCTYPE>*/
 					if (parser->init_state) {
 						if (parser->init_state==1) {
-							format_sax_error(parser, 0, "Invalid DOCTYPE");
+							format_sax_error(parser, 0, "Invalid <!DOCTYPE...> or <?xml...?>");
 							return GF_TRUE;
 						}
 						parser->sax_state = SAX_STATE_ELEMENT;
@@ -390,7 +392,7 @@ static Bool xml_sax_parse_attribute(GF_SAXParser *parser)
 					if (parser->init_state) {
 						parser->current_pos+=1;
 						if (parser->init_state==1) {
-							format_sax_error(parser, 0, "Invalid DOCTYPE");
+							format_sax_error(parser, 0, "Invalid <!DOCTYPE...> or <?xml...?>");
 							return GF_TRUE;
 						}
 						parser->sax_state = SAX_STATE_ELEMENT;
@@ -1222,7 +1224,7 @@ GF_Err gf_xml_sax_parse_file(GF_SAXParser *parser, const char *fileName, gf_xml_
 		if (e) return e;
 
 
-		e = gf_xml_sax_parse(parser, xml_mem_address+3);
+		e = gf_xml_sax_parse(parser, xml_mem_address+4);
 		if (parser->on_progress) parser->on_progress(parser->sax_cbck, parser->file_pos, parser->file_size);
 
 		parser->elt_start_pos = parser->elt_end_pos = 0;
@@ -1375,7 +1377,7 @@ char *gf_xml_sax_peek_node(GF_SAXParser *parser, char *att_name, char *att_value
 							}\
 							if (__is_copy) { memmove(szLine, __str, sizeof(char)*_len); szLine[_len] = 0; }\
 							else strcat(szLine, __str); \
- 
+
 	from_buffer=GF_FALSE;
 #ifdef NO_GZIP
 	if (!parser->f_in) from_buffer=GF_TRUE;
@@ -1646,7 +1648,7 @@ static void on_dom_node_start(void *cbk, const char *name, const char *ns, const
 		par->root = node;
 		gf_list_add(par->root_nodes, node);
 	}
-	
+
 	for (i=0; i<nb_attributes; i++) {
 		GF_XMLAttribute *att;
 		GF_SAFEALLOC(att, GF_XMLAttribute);
@@ -1713,7 +1715,7 @@ GF_DOMParser *gf_xml_dom_new()
 	GF_DOMParser *dom;
 	GF_SAFEALLOC(dom, GF_DOMParser);
 	if (!dom) return NULL;
-	
+
 	dom->root_nodes = gf_list_new();
 	return dom;
 }
@@ -1854,7 +1856,7 @@ static void gf_xml_dom_node_serialize(GF_XMLNode *node, Bool content_only, char 
 	}	\
 	strcat((*str), v);	\
 	*size += vlen;	\
- 
+
 	switch (node->type) {
 	case GF_XML_CDATA_TYPE:
 		SET_STRING("![CDATA[");
@@ -1876,8 +1878,10 @@ static void gf_xml_dom_node_serialize(GF_XMLNode *node, Bool content_only, char 
 			SET_STRING(":");
 		}
 		SET_STRING(node->name);
-		SET_STRING(" ");
 		count = gf_list_count(node->attributes);
+		if (count > 0) {
+			SET_STRING(" ");
+		}
 		for (i=0; i<count; i++) {
 			GF_XMLAttribute *att = (GF_XMLAttribute*)gf_list_get(node->attributes, i);
 			SET_STRING(att->name);
@@ -2005,7 +2009,7 @@ GF_XMLNode* gf_xml_dom_node_new(const char* ns, const char* name) {
 	else if (strstr(att->value, "0X")) { u32 __i; sscanf(att->value+2, "%X", &__i); _value = __i; }\
 	else sscanf(att->value, _fmt, &_value); \
 	}\
- 
+
 
 static GF_Err gf_xml_parse_bit_sequence_bs(GF_XMLNode *bsroot, GF_BitStream *bs)
 {
@@ -2222,6 +2226,46 @@ GF_Err gf_xml_get_element_check_namespace(const GF_XMLNode *n, const char *expec
 
 	GF_LOG(GF_LOG_WARNING, GF_LOG_CORE, ("[XML] Unresolved namespace \"%s\" for node \"%s\"\n", n->ns, n->name));
 	return GF_BAD_PARAM;
+}
+
+void gf_xml_dump_string(FILE* file, const char *before, const char *str, const char *after) {
+	size_t i;
+	size_t len=str?strlen(str):0;
+
+	if (before) {
+		fprintf(file, "%s", before);
+	}
+
+	for (i = 0; i < len; i++) {
+		switch (str[i]) {
+		case '&':
+			fprintf(file, "%s", "&amp;");
+			break;
+		case '<':
+			fprintf(file, "%s", "&lt;");
+			break;
+		case '>':
+			fprintf(file, "%s", "&gt;");
+			break;
+		case '\'':
+			fprintf(file, "&apos;");
+			break;
+		case '\"':
+			fprintf(file, "&quot;");
+			break;
+
+		default:
+			fprintf(file, "%c", str[i]);
+			break;
+		}
+	}
+
+	if (after) {
+		fprintf(file, "%s", after);
+	}
+
+
+
 }
 
 #endif /*GPAC_DISABLE_CORE_TOOLS*/

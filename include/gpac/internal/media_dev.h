@@ -158,6 +158,8 @@ typedef struct
 	/*used to discard repeated SPSs - 0: not parsed, 1 parsed, 2 sent*/
 	u32 state;
 
+	u32 sbusps_crc;
+
 	/*for SVC stats during import*/
 	u32 nb_ei, nb_ep, nb_eb;
 } AVC_SPS;
@@ -219,6 +221,11 @@ typedef struct
 	u8 pic_struct;
 	/*to be eventually completed by other pic_timing members*/
 } AVCSeiPicTiming;
+
+typedef struct
+{
+	Bool rpu_flag;
+} AVCSeiItuTT35DolbyVision;
 
 typedef struct
 {
@@ -339,6 +346,10 @@ typedef struct
 	Bool poc_proportional_to_timing_flag;
 	u32 num_ticks_poc_diff_one_minus1;
 
+	Bool video_full_range_flag;
+	Bool colour_description_present_flag;
+	u8 colour_primaries, transfer_characteristic, matrix_coeffs;
+
 	u32 rep_format_idx;
 } HEVC_SPS;
 
@@ -423,7 +434,7 @@ typedef struct
 {
 	AVCSeiRecoveryPoint recovery_point;
 	AVCSeiPicTiming pic_timing;
-
+	AVCSeiItuTT35DolbyVision dovi;
 } HEVC_SEI;
 
 typedef struct
@@ -472,6 +483,10 @@ typedef struct _hevc_state
 	s32 last_parsed_vps_id;
 	s32 last_parsed_sps_id;
 	s32 last_parsed_pps_id;
+
+	// Dolby Vision
+	Bool dv_rpu;
+	Bool dv_el;
 } HEVCState;
 
 enum
@@ -489,19 +504,22 @@ Bool gf_media_hevc_slice_is_IDR(HEVCState *hevc);
 //parses VPS and rewrites data buffer after removing VPS extension
 s32 gf_media_hevc_read_vps_ex(char *data, u32 *size, HEVCState *hevc, Bool remove_extensions);
 
+void gf_media_hevc_parse_ps(GF_HEVCConfig* hevccfg, HEVCState* hevc, u32 nal_type);
 
 GF_Err gf_hevc_get_sps_info_with_state(HEVCState *hevc_state, char *sps_data, u32 sps_size, u32 *sps_id, u32 *width, u32 *height, s32 *par_n, s32 *par_d);
 
+/*parses HEVC SEI and fill state accordingly*/
+void gf_media_hevc_parse_sei(char* buffer, u32 nal_size, HEVCState *hevc);
 
 
-GF_Err gf_media_parse_ivf_file_header(GF_BitStream *bs, u16 *width, u16 *height, u32 *codec_fourcc, u32 *frame_rate, u32 *time_scale, u32 *num_frames);
+GF_Err gf_media_parse_ivf_file_header(GF_BitStream *bs, int *width, int *height, u32 *codec_fourcc, u32 *frame_rate, u32 *time_scale, u32 *num_frames);
 
 
 
 #define VP9_MAX_FRAMES_IN_SUPERFRAME 16
 
-GF_Err vp9_parse_sample(GF_BitStream *bs, Bool *key_frame, GF_VPConfig *vp9_cfg);
-GF_Err vp9_parse_superframe(GF_BitStream *bs, u64 ivf_frame_size, int *num_frames_in_superframe, u32 frame_sizes[VP9_MAX_FRAMES_IN_SUPERFRAME]);
+GF_Err vp9_parse_sample(GF_BitStream *bs, GF_VPConfig *vp9_cfg, Bool *key_frame, int *FrameWidth, int *FrameHeight, int *renderWidth, int *renderHeight);
+GF_Err vp9_parse_superframe(GF_BitStream *bs, u64 ivf_frame_size, int *num_frames_in_superframe, u32 frame_sizes[VP9_MAX_FRAMES_IN_SUPERFRAME], int *superframe_index_size);
 
 
 
@@ -517,15 +535,19 @@ typedef enum {
 
 typedef struct
 {
+	//offset in bytes after first byte of obu, including its header
+	u32 obu_start_offset;
+	u32 size;
+} AV1Tile;
+
+typedef struct
+{
+	Bool is_first_frame;
 	Bool seen_frame_header, seen_seq_header;
 	Bool key_frame, show_frame;
 	AV1FrameType frame_type;
 	GF_List *header_obus, *frame_obus; /*GF_AV1_OBUArrayEntry*/
-	struct {
-		//offset in bytes after first byte of obu, including its header
-		u32 obu_start_offset;
-		u32 size;
-	} tiles[AV1_MAX_TILE_ROWS * AV1_MAX_TILE_COLS];
+	AV1Tile tiles[AV1_MAX_TILE_ROWS * AV1_MAX_TILE_COLS];
 	u32 nb_tiles_in_obu;
 	u8 refresh_frame_flags;
 	u8 order_hint;
@@ -552,7 +574,7 @@ typedef struct
 	Bool reduced_still_picture_header;
 	Bool decoder_model_info_present_flag;
 	u16 OperatingPointIdc;
-	u32 width, height, UpscaledWidth;
+	int width, height, UpscaledWidth;
 	double FPS;
 
 	Bool use_128x128_superblock;
@@ -613,7 +635,7 @@ GF_Err aom_av1_parse_temporal_unit_from_annexb(GF_BitStream *bs, AV1State *state
 GF_Err aom_av1_parse_temporal_unit_from_ivf(GF_BitStream *bs, AV1State *state);
 
 GF_Err gf_media_aom_parse_ivf_file_header(GF_BitStream *bs, AV1State *state);
-GF_Err gf_media_parse_ivf_frame_header(GF_BitStream *bs, u64 *frame_size);
+GF_Err gf_media_parse_ivf_frame_header(GF_BitStream *bs, u64 *frame_size, u64 *pts);
 
 Bool gf_media_probe_ivf(GF_BitStream *bs);
 Bool gf_media_aom_probe_annexb(GF_BitStream *bs);
@@ -622,7 +644,43 @@ Bool gf_media_aom_probe_annexb(GF_BitStream *bs);
 GF_Err gf_media_aom_av1_parse_obu(GF_BitStream *bs, ObuType *obu_type, u64 *obu_size, u32 *obu_hdr_size, AV1State *state);
 
 Bool av1_is_obu_header(ObuType obu_type);
+void gf_av1_reset_state(AV1State *state);
 void av1_reset_frame_state(AV1StateFrame *frame_state);
+
+typedef struct
+{
+	u32 picture_size;
+	u16 deprecated_number_of_slices;
+	u8 log2_desired_slice_size_in_mb;
+} GF_ProResPictureInfo;
+
+typedef struct
+{
+	u32 frame_size;
+	u32 frame_identifier;
+	u16 frame_hdr_size;
+	u8 version;
+	u32 encoder_id;
+	u16 width;
+	u16 height;
+	u8 chroma_format;
+	u8 interlaced_mode;
+	u8 aspect_ratio_information;
+	u8 framerate_code;
+	u8 color_primaries;
+	u8 transfer_characteristics;
+	u8 matrix_coefficients;
+	u8 alpha_channel_type;
+	u8 load_luma_quant_matrix, load_chroma_quant_matrix;
+	u8 luma_quant_matrix[8][8];
+	u8 chroma_quant_matrix[8][8];
+
+	u8 nb_pic; //1 or 2
+	//for now we don't parse this
+//	GF_ProResPictureInfo pictures[2];
+} GF_ProResFrameInfo;
+
+GF_Err gf_media_prores_parse_bs(GF_BitStream *bs, GF_ProResFrameInfo *prores_frame);
 
 #endif /*GPAC_DISABLE_AV_PARSERS*/
 
@@ -663,6 +721,7 @@ typedef enum
 	GF_DASH_TEMPLATE_TEMPLATE,
 	GF_DASH_TEMPLATE_INITIALIZATION_TEMPLATE,
 	GF_DASH_TEMPLATE_REPINDEX,
+	GF_DASH_TEMPLATE_SEGMENT_NO_OUTPUT
 } GF_DashTemplateSegmentType;
 
 GF_Err gf_media_mpd_format_segment_name(GF_DashTemplateSegmentType seg_type, Bool is_bs_switching, char *segment_name, const char *output_file_name, const char *rep_id, const char *base_url, const char *seg_rad_name, const char *seg_ext, u64 start_time, u32 bandwidth, u32 segment_number, Bool use_segment_timeline);

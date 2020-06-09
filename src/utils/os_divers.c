@@ -340,6 +340,7 @@ void gf_utc_time_since_1970(u32 *sec, u32 *msec)
 #endif
 }
 
+GF_EXPORT
 void gf_get_user_name(char *buf, u32 buf_size)
 {
 	strcpy(buf, "mpeg4-user");
@@ -397,6 +398,7 @@ Bool gf_prompt_has_input()
 char gf_prompt_get_char() {
 	return 0;
 }
+GF_EXPORT
 void gf_prompt_set_echo_off(Bool echo_off) {
 	return;
 }
@@ -416,6 +418,7 @@ char gf_prompt_get_char()
 	return getchar();
 }
 
+GF_EXPORT
 void gf_prompt_set_echo_off(Bool echo_off)
 {
 	DWORD flags;
@@ -454,6 +457,7 @@ static void close_keyboard(Bool new_line)
 	if (new_line) fprintf(stderr, "\n");
 }
 
+GF_EXPORT
 void gf_prompt_set_echo_off(Bool echo_off)
 {
 	init_keyboard();
@@ -1415,7 +1419,7 @@ Bool gf_sys_get_rti(u32 refresh_time_ms, GF_SystemRTInfo *rti, u32 flags)
 	return res;
 }
 
-
+GF_EXPORT
 char * gf_get_default_cache_directory() {
 	char szPath[GF_MAX_PATH];
 	char* root_tmp;
@@ -1984,8 +1988,14 @@ GF_Err gf_bin128_parse(const char *string, bin128 value)
 				break;
 			sprintf(szV, "%c%c", string[j], string[j+1]);
 			sscanf(szV, "%x", &v);
+			if (i > 15) {
+				// force error check below
+				i++;
+				break;
+			}
 			value[i] = v;
 			i++;
+
 		}
 	}
 	if (i != 16) {

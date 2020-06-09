@@ -67,7 +67,15 @@ Bool gf_isom_is_nalu_based_entry(GF_MediaBox *mdia, GF_SampleEntryBox *_entry)
 	}
 	entry = (GF_MPEGVisualSampleEntryBox*)_entry;
 	if (!entry) return GF_FALSE;
-	if (entry->avc_config || entry->svc_config || entry->mvc_config || entry->hevc_config || entry->lhvc_config) return GF_TRUE;
+	switch (entry->internal_type) {
+		case GF_ISOM_MEDIA_VISUAL:
+		case GF_ISOM_MEDIA_AUXV:
+		case GF_ISOM_MEDIA_PICT:
+			if (entry->avc_config || entry->svc_config || entry->mvc_config || entry->hevc_config || entry->lhvc_config) return GF_TRUE;
+			break;
+		default:
+			break;
+	}
 	return GF_FALSE;
 }
 
@@ -843,7 +851,10 @@ static GF_AVCConfig *AVC_DuplicateConfig(GF_AVCConfig *cfg)
 {
 	u32 i, count;
 	GF_AVCConfigSlot *p1, *p2;
-	GF_AVCConfig *cfg_new = gf_odf_avc_cfg_new();
+	GF_AVCConfig *cfg_new;
+	if (!cfg)
+		return NULL;
+	cfg_new = gf_odf_avc_cfg_new();
 	cfg_new->AVCLevelIndication = cfg->AVCLevelIndication;
 	cfg_new->AVCProfileIndication = cfg->AVCProfileIndication;
 	cfg_new->configurationVersion = cfg->configurationVersion;
@@ -1195,7 +1206,21 @@ GF_Err AVC_HEVC_UpdateESD(GF_MPEGVisualSampleEntryBox *avc, GF_ESD *esd)
 	return GF_OK;
 }
 
-
+#if !defined(GPAC_DISABLE_AV_PARSERS) && !defined(GPAC_DISABLE_HEVC)
+void gf_media_hevc_parse_ps(GF_HEVCConfig* hevccfg, HEVCState* hevc, u32 nal_type)
+{
+	u32 i, j;
+	for (i = 0; i < gf_list_count(hevccfg->param_array); i++) {
+		GF_HEVCParamArray* ar = gf_list_get(hevccfg->param_array, i);
+		if (ar->type != nal_type) continue;
+		for (j = 0; j < gf_list_count(ar->nalus); j++) {
+			u8 ntype, tid, lid;
+			GF_AVCConfigSlot* sl = gf_list_get(ar->nalus, j);
+			gf_media_hevc_parse_nalu(sl->data, sl->size, hevc, &ntype, &tid, &lid);
+		}
+	}
+}
+#endif
 
 static GF_AV1Config* AV1_DuplicateConfig(GF_AV1Config const * const cfg) {
 	u32 i = 0;
@@ -1267,8 +1292,26 @@ void AV1_RewriteESDescriptor(GF_MPEGVisualSampleEntryBox *av1)
 }
 
 
-static GF_VPConfig* VP_DuplicateConfig(GF_VPConfig const * const cfg) {
+static GF_DOVIDecoderConfigurationRecord* DOVI_DuplicateConfig(GF_DOVIDecoderConfigurationRecord *cfg)
+{
+	GF_DOVIDecoderConfigurationRecord* out = NULL;
+	GF_SAFEALLOC(out, GF_DOVIDecoderConfigurationRecord);
+	if (!out) return NULL;
 
+	out->dv_version_major = cfg->dv_version_major;
+	out->dv_version_minor = cfg->dv_version_minor;
+	out->dv_profile = cfg->dv_profile;
+	out->dv_level = cfg->dv_level;
+	out->rpu_present_flag = cfg->rpu_present_flag;
+	out->el_present_flag = cfg->el_present_flag;
+	out->bl_present_flag = cfg->bl_present_flag;
+
+	return out;
+}
+
+
+static GF_VPConfig* VP_DuplicateConfig(GF_VPConfig const * const cfg)
+{
 	GF_VPConfig *out = gf_odf_vp_cfg_new();
 	if (out) {
 		out->profile = cfg->profile;
@@ -1279,12 +1322,51 @@ static GF_VPConfig* VP_DuplicateConfig(GF_VPConfig const * const cfg) {
 		out->colour_primaries = cfg->colour_primaries;
 		out->transfer_characteristics = cfg->transfer_characteristics;
 		out->matrix_coefficients = cfg->matrix_coefficients;
-
-
 	}
 
 	return out;
 }
+
+void VP9_RewriteESDescriptorEx(GF_MPEGVisualSampleEntryBox *vp9, GF_MediaBox *mdia)
+{
+	GF_BitRateBox *btrt = gf_isom_sample_entry_get_bitrate((GF_SampleEntryBox *)vp9, GF_FALSE);
+
+	if (vp9->emul_esd) gf_odf_desc_del((GF_Descriptor *)vp9->emul_esd);
+	vp9->emul_esd = gf_odf_desc_esd_new(2);
+	vp9->emul_esd->decoderConfig->streamType = GF_STREAM_VISUAL;
+	vp9->emul_esd->decoderConfig->objectTypeIndication = GPAC_OTI_VIDEO_VP9;
+
+	if (btrt) {
+		vp9->emul_esd->decoderConfig->bufferSizeDB = btrt->bufferSizeDB;
+		vp9->emul_esd->decoderConfig->avgBitrate = btrt->avgBitrate;
+		vp9->emul_esd->decoderConfig->maxBitrate = btrt->maxBitrate;
+	}
+	if (vp9->descr) {
+		GF_Descriptor *desc, *clone;
+		u32 i = 0;
+		while ((desc = (GF_Descriptor *)gf_list_enum(vp9->descr->descriptors, &i))) {
+			clone = NULL;
+			gf_odf_desc_copy(desc, &clone);
+			if (gf_odf_desc_add_desc((GF_Descriptor *)vp9->emul_esd, clone) != GF_OK)
+				gf_odf_desc_del(clone);
+		}
+	}
+
+	if (vp9->vp_config) {
+		GF_VPConfig *vp9_cfg = VP_DuplicateConfig(vp9->vp_config->config);
+		if (vp9_cfg) {
+			gf_odf_vp_cfg_write(vp9_cfg, &vp9->emul_esd->decoderConfig->decoderSpecificInfo->data, &vp9->emul_esd->decoderConfig->decoderSpecificInfo->dataLength, GF_FALSE);
+			gf_odf_vp_cfg_del(vp9_cfg);
+		}
+	}
+}
+
+void VP9_RewriteESDescriptor(GF_MPEGVisualSampleEntryBox *vp9)
+{
+	VP9_RewriteESDescriptorEx(vp9, NULL);
+}
+
+
 
 #ifndef GPAC_DISABLE_ISOM_WRITE
 GF_EXPORT
@@ -1446,6 +1528,7 @@ GF_Err gf_isom_avc_config_update(GF_ISOFile *the_file, u32 trackNumber, u32 Desc
 	return gf_isom_avc_config_update_ex(the_file, trackNumber, DescriptionIndex, cfg, 0);
 }
 
+GF_EXPORT
 GF_Err gf_isom_svc_config_update(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex, GF_AVCConfig *cfg, Bool is_add)
 {
 	return gf_isom_avc_config_update_ex(the_file, trackNumber, DescriptionIndex, cfg, is_add ? 1 : 2);
@@ -1617,7 +1700,7 @@ GF_Err gf_isom_hevc_config_new(GF_ISOFile *the_file, u32 trackNumber, GF_HEVCCon
 		trak->Media->mediaHeader->modificationTime = gf_isom_get_mp4time();
 
 	//create a new entry
-	entry = (GF_MPEGVisualSampleEntryBox *) gf_isom_box_new(GF_ISOM_BOX_TYPE_HVC1);
+	entry = (GF_MPEGVisualSampleEntryBox*)gf_isom_box_new(GF_ISOM_BOX_TYPE_HVC1);
 	if (!entry) return GF_OUT_OF_MEM;
 	entry->hevc_config = (GF_HEVCConfigurationBox*)gf_isom_box_new(GF_ISOM_BOX_TYPE_HVCC);
 	entry->hevc_config->config = HEVC_DuplicateConfig(cfg);
@@ -1736,10 +1819,11 @@ static Bool hevc_cleanup_config(GF_HEVCConfig *cfg, HevcConfigUpdateType operand
 			}
 			gf_list_del(ar->nalus);
 			gf_free(ar);
+			ar=NULL;
 			gf_list_rem(cfg->param_array, i);
 			i--;
 		}
-		if (!ar->array_completeness)
+		if (ar && !ar->array_completeness)
 			array_incomplete = 1;
 	}
 	return array_incomplete;
@@ -1891,6 +1975,7 @@ GF_Err gf_isom_hevc_set_tile_config(GF_ISOFile *the_file, u32 trackNumber, u32 D
 	return gf_isom_hevc_config_update_ex(the_file, trackNumber, DescriptionIndex, cfg, is_base_track ? GF_ISOM_HVCC_SET_TILE_BASE_TRACK : GF_ISOM_HVCC_SET_TILE);
 }
 
+GF_EXPORT
 GF_Err gf_isom_lhvc_config_update(GF_ISOFile *the_file, u32 trackNumber, u32 DescriptionIndex, GF_HEVCConfig *cfg, GF_ISOMLHEVCTrackType track_type)
 {
 	if (cfg) cfg->is_lhvc = GF_TRUE;
@@ -1923,6 +2008,10 @@ GF_Box *gf_isom_clone_config_box(GF_Box *box)
 	case GF_ISOM_BOX_TYPE_HVCC:
 		clone = gf_isom_box_new(box->type);
 		((GF_HEVCConfigurationBox *)clone)->config = HEVC_DuplicateConfig(((GF_HEVCConfigurationBox *)box)->config);
+		break;
+	case GF_ISOM_BOX_TYPE_AV1C:
+		clone = gf_isom_box_new(box->type);
+		((GF_AV1ConfigurationBox *)clone)->config = AV1_DuplicateConfig(((GF_AV1ConfigurationBox *)box)->config);
 		break;
 	default:
 		clone = NULL;
@@ -2147,6 +2236,17 @@ GF_HEVCConfig *gf_isom_lhvc_config_get(GF_ISOFile *the_file, u32 trackNumber, u3
 	return lhvc;
 }
 
+GF_EXPORT
+GF_DOVIDecoderConfigurationRecord *gf_isom_dovi_config_get(GF_ISOFile* the_file, u32 trackNumber, u32 DescriptionIndex)
+{
+	GF_TrackBox* trak;
+	GF_MPEGVisualSampleEntryBox *entry;
+	trak = gf_isom_get_track_from_file(the_file, trackNumber);
+	if (!trak || !trak->Media || !DescriptionIndex) return NULL;
+	entry = (GF_MPEGVisualSampleEntryBox*)gf_list_get(trak->Media->information->sampleTable->SampleDescription->other_boxes, DescriptionIndex - 1);
+	if (!entry || !entry->dovi_config) return NULL;
+	return DOVI_DuplicateConfig(&entry->dovi_config->DOVIConfig);
+}
 
 void btrt_del(GF_Box *s)
 {
@@ -2290,6 +2390,11 @@ GF_Err avcc_Read(GF_Box *s, GF_BitStream *bs)
 	for (i=0; i<count; i++) {
 		GF_AVCConfigSlot *sl = (GF_AVCConfigSlot *) gf_malloc(sizeof(GF_AVCConfigSlot));
 		sl->size = gf_bs_read_u16(bs);
+		if (!sl->size || gf_bs_available(bs) < sl->size) {
+			gf_free(sl);
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("AVCC: Not enough bits to parse. Aborting.\n"));
+			return GF_ISOM_INVALID_FILE;
+		}
 		sl->data = (char *)gf_malloc(sizeof(char) * sl->size);
 		gf_bs_read_data(bs, sl->data, sl->size);
 		gf_list_add(ptr->config->sequenceParameterSets, sl);
@@ -2300,7 +2405,7 @@ GF_Err avcc_Read(GF_Box *s, GF_BitStream *bs)
 	for (i=0; i<count; i++) {
 		GF_AVCConfigSlot *sl = (GF_AVCConfigSlot *)gf_malloc(sizeof(GF_AVCConfigSlot));
 		sl->size = gf_bs_read_u16(bs);
-		if (gf_bs_available(bs) < sl->size) {
+		if (!sl->size || gf_bs_available(bs) < sl->size) {
 			gf_free(sl);
 			GF_LOG(GF_LOG_ERROR, GF_LOG_CODING, ("AVCC: Not enough bits to parse. Aborting.\n"));
 			return GF_ISOM_INVALID_FILE;
@@ -2563,7 +2668,7 @@ GF_Err av1c_Read(GF_Box *s, GF_BitStream *bs) {
 
 	if (ptr->config) gf_odf_av1_cfg_del(ptr->config);
 	GF_SAFEALLOC(ptr->config, GF_AV1Config);
-	memset(&state, 0, sizeof(AV1State));
+	gf_av1_reset_state(&state);
 	state.config = ptr->config;
 
 	ptr->config->marker = gf_bs_read_int(bs, 1);
@@ -2679,7 +2784,7 @@ GF_Err vpcc_Read(GF_Box *s, GF_BitStream *bs)
 	ptr->config = NULL;
 
 	pos = gf_bs_get_position(bs);
-	ptr->config = gf_odf_vp_cfg_read_bs(bs);
+	ptr->config = gf_odf_vp_cfg_read_bs(bs, ptr->version == 0);
 	pos = gf_bs_get_position(bs) - pos ;
 
 	if (pos < ptr->size)
@@ -2696,6 +2801,7 @@ GF_Box *vpcc_New()
 	if (tmp == NULL) return NULL;
 	memset(tmp, 0, sizeof(GF_VPConfigurationBox));
 	tmp->type = GF_ISOM_BOX_TYPE_VPCC;
+	tmp->version = 1;
 	return (GF_Box *)tmp;
 }
 
@@ -2706,10 +2812,11 @@ GF_Err vpcc_Write(GF_Box *s, GF_BitStream *bs)
 	GF_VPConfigurationBox *ptr = (GF_VPConfigurationBox *) s;
 	if (!s) return GF_BAD_PARAM;
 	if (!ptr->config) return GF_OK;
+
 	e = gf_isom_full_box_write(s, bs);
 	if (e) return e;
 
-	return gf_odf_vp_cfg_write_bs(ptr->config, bs);
+	return gf_odf_vp_cfg_write_bs(ptr->config, bs, ptr->version == 0);
 }
 #endif
 
@@ -2722,15 +2829,127 @@ GF_Err vpcc_Size(GF_Box *s)
 		return GF_OK;
 	}
 
-	if (ptr->config->codec_initdata_size) {
-		GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[ISOBMFF] VPConfigurationBox: codec_initdata_size MUST be 0, was %d\n", ptr->config->codec_initdata_size));
-		return GF_ISOM_INVALID_FILE;
-	}
+	if (ptr->version == 0) {
+		ptr->size += 6;
+	} else {
+		if (ptr->config->codec_initdata_size) {
+			GF_LOG(GF_LOG_ERROR, GF_LOG_CONTAINER, ("[ISOBMFF] VPConfigurationBox: codec_initdata_size MUST be 0, was %d\n", ptr->config->codec_initdata_size));
+			return GF_ISOM_INVALID_FILE;
+		}
 
-	ptr->size += 8;
+		ptr->size += 8;
+	}
 
 	return GF_OK;
 }
+
+
+GF_Box *SmDm_New()
+{
+	ISOM_DECL_BOX_ALLOC(GF_SMPTE2086MasteringDisplayMetadataBox, GF_ISOM_BOX_TYPE_SMDM);
+	return (GF_Box *)tmp;
+}
+
+void SmDm_del(GF_Box *a)
+{
+	GF_SMPTE2086MasteringDisplayMetadataBox *p = (GF_SMPTE2086MasteringDisplayMetadataBox *)a;
+	gf_free(p);
+}
+
+GF_Err SmDm_Read(GF_Box *s, GF_BitStream *bs)
+{
+	GF_SMPTE2086MasteringDisplayMetadataBox *p = (GF_SMPTE2086MasteringDisplayMetadataBox *)s;
+	p->primaryRChromaticity_x = gf_bs_read_u16(bs);
+	p->primaryRChromaticity_y = gf_bs_read_u16(bs);
+	p->primaryGChromaticity_x = gf_bs_read_u16(bs);
+	p->primaryGChromaticity_y = gf_bs_read_u16(bs);
+	p->primaryBChromaticity_x = gf_bs_read_u16(bs);
+	p->primaryBChromaticity_y = gf_bs_read_u16(bs);
+	p->whitePointChromaticity_x = gf_bs_read_u16(bs);
+	p->whitePointChromaticity_y = gf_bs_read_u16(bs);
+	p->luminanceMax = gf_bs_read_u32(bs);
+	p->luminanceMin = gf_bs_read_u32(bs);
+
+	return GF_OK;
+}
+
+#ifndef GPAC_DISABLE_ISOM_WRITE
+
+GF_Err SmDm_Write(GF_Box *s, GF_BitStream *bs)
+{
+	GF_Err e;
+	GF_SMPTE2086MasteringDisplayMetadataBox *p = (GF_SMPTE2086MasteringDisplayMetadataBox*)s;
+	e = gf_isom_full_box_write(s, bs);
+	if (e) return e;
+
+	gf_bs_write_u16(bs, p->primaryRChromaticity_x);
+	gf_bs_write_u16(bs, p->primaryRChromaticity_y);
+	gf_bs_write_u16(bs, p->primaryGChromaticity_x);
+	gf_bs_write_u16(bs, p->primaryGChromaticity_y);
+	gf_bs_write_u16(bs, p->primaryBChromaticity_x);
+	gf_bs_write_u16(bs, p->primaryBChromaticity_y);
+	gf_bs_write_u16(bs, p->whitePointChromaticity_x);
+	gf_bs_write_u16(bs, p->whitePointChromaticity_y);
+	gf_bs_write_u32(bs, p->luminanceMax);
+	gf_bs_write_u32(bs, p->luminanceMin);
+
+	return GF_OK;
+}
+
+GF_Err SmDm_Size(GF_Box *s)
+{
+	GF_SMPTE2086MasteringDisplayMetadataBox *p = (GF_SMPTE2086MasteringDisplayMetadataBox*)s;
+	p->size += 24;
+	return GF_OK;
+}
+
+#endif /*GPAC_DISABLE_ISOM_WRITE*/
+
+
+GF_Box *CoLL_New()
+{
+	ISOM_DECL_BOX_ALLOC(GF_VPContentLightLevelBox, GF_ISOM_BOX_TYPE_COLL);
+	return (GF_Box *)tmp;
+}
+
+void CoLL_del(GF_Box *a)
+{
+	GF_VPContentLightLevelBox *p = (GF_VPContentLightLevelBox *)a;
+	gf_free(p);
+}
+
+GF_Err CoLL_Read(GF_Box *s, GF_BitStream *bs)
+{
+	GF_VPContentLightLevelBox *p = (GF_VPContentLightLevelBox *)s;
+	p->maxCLL = gf_bs_read_u16(bs);
+	p->maxFALL = gf_bs_read_u16(bs);
+
+	return GF_OK;
+}
+
+#ifndef GPAC_DISABLE_ISOM_WRITE
+
+GF_Err CoLL_Write(GF_Box *s, GF_BitStream *bs)
+{
+	GF_Err e;
+	GF_VPContentLightLevelBox *p = (GF_VPContentLightLevelBox*)s;
+	e = gf_isom_full_box_write(s, bs);
+	if (e) return e;
+
+	gf_bs_write_u16(bs, p->maxCLL);
+	gf_bs_write_u16(bs, p->maxFALL);
+
+	return GF_OK;
+}
+
+GF_Err CoLL_Size(GF_Box *s)
+{
+	GF_VPContentLightLevelBox *p = (GF_VPContentLightLevelBox*)s;
+	p->size += 4;
+	return GF_OK;
+}
+
+#endif /*GPAC_DISABLE_ISOM_WRITE*/
 
 
 

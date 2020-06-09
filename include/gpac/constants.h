@@ -316,6 +316,8 @@ enum
 	GPAC_OTI_VIDEO_MVC = 0x29,
 	/*!OTI for AOM AV1 streams*/
 	GPAC_OTI_VIDEO_AV1 = 0x30,
+	/*!OTI for VP9 streams*/
+	GPAC_OTI_VIDEO_VP9 = 0x31,
 	/*!OTI for MPEG-4 AAC streams*/
 	GPAC_OTI_AUDIO_AAC_MPEG4 = 0x40,
 
@@ -456,6 +458,7 @@ enum
 		}\endcode
 	*/
 	GPAC_OTI_MEDIA_OGG = 0xDD,
+	GPAC_OTI_MEDIA_OPUS = 0xDE,
 	GPAC_OTI_MEDIA_THEORA = 0xDF,
 
 	GPAC_OTI_MEDIA_SUBPIC = 0xE0,
@@ -639,7 +642,12 @@ enum
 	/*! SVC slice*/
 	GF_AVC_NALU_SVC_SLICE = 20,
 	/*! View and dependency representation delimiter */
-	GF_AVC_NALU_VDRD = 24
+	GF_AVC_NALU_VDRD = 24,
+
+	/*! Dolby Vision RPU */
+	GF_AVC_NALU_DV_RPU = 28,
+	/*! Dolby Vision EL */
+	GF_AVC_NALU_DV_EL = 30
 };
 
 
@@ -695,6 +703,14 @@ enum
 	GF_HEVC_NALU_SLICE_RASL_N = 8,
 	/*! RASL R HEVC slice*/
 	GF_HEVC_NALU_SLICE_RASL_R = 9,
+	/*! Reserved non-IRAP SLNR VCL NAL unit types*/
+	GF_HEVC_NALU_SLICE_RSV_VCL_N10 = 10,
+	GF_HEVC_NALU_SLICE_RSV_VCL_N12 = 12,
+	GF_HEVC_NALU_SLICE_RSV_VCL_N14 = 14,
+	/*! Reserved non-IRAP sub-layer reference VCL NAL unit types*/
+	GF_HEVC_NALU_SLICE_RSV_VCL_R11 = 11,
+	GF_HEVC_NALU_SLICE_RSV_VCL_R13 = 13,
+	GF_HEVC_NALU_SLICE_RSV_VCL_R15 = 15,
 	/*! BLA LP HEVC slice*/
 	GF_HEVC_NALU_SLICE_BLA_W_LP = 16,
 	/*! BLA DLP HEVC slice*/
@@ -725,6 +741,11 @@ enum
 	GF_HEVC_NALU_SEI_PREFIX = 39,
 	/*! suffix SEI message*/
 	GF_HEVC_NALU_SEI_SUFFIX = 40,
+
+	/*! Dolby Vision RPU */
+	GF_HEVC_NALU_DV_RPU = 62,
+	/*! Dolby Vision EL */
+	GF_HEVC_NALU_DV_EL = 63
 };
 
 

@@ -768,7 +768,11 @@ void gf_dm_sess_del(GF_DownloadSession *sess)
 		sess->th = NULL;
 	}
 
-	if (sess->dm) gf_list_del_item(sess->dm->sessions, sess);
+	if (sess->dm) {
+		gf_mx_p(sess->dm->cache_mx);
+		gf_list_del_item(sess->dm->sessions, sess);
+		gf_mx_v(sess->dm->cache_mx);
+	}
 
 	gf_dm_remove_cache_entry_from_session(sess);
 	sess->cache_entry = NULL;
@@ -1148,6 +1152,14 @@ GF_Err gf_dm_sess_setup_from_url(GF_DownloadSession *sess, const char *url)
 		if (sess->sock) gf_sk_del(sess->sock);
 		sess->sock = NULL;
 		sess->status = GF_NETIO_SETUP;
+#ifdef GPAC_HAS_SSL
+		if (sess->ssl) {
+			SSL_shutdown(sess->ssl);
+			SSL_free(sess->ssl);
+			sess->ssl = NULL;
+		}
+#endif
+
 	}
 	sess->total_size=0;
 	sess->bytes_done=0;
@@ -1270,7 +1282,9 @@ GF_DownloadSession *gf_dm_sess_new(GF_DownloadManager *dm, const char *url, u32 
 	sess = gf_dm_sess_new_simple(dm, url, dl_flags, user_io, usr_cbk, e);
 	if (sess) {
 		sess->dm = dm;
+		gf_mx_p(dm->cache_mx);
 		gf_list_add(dm->sessions, sess);
+		gf_mx_v(dm->cache_mx);
 	}
 	return sess;
 }
@@ -2449,7 +2463,7 @@ static GF_Err http_send_headers(GF_DownloadSession *sess, char * sHTTP) {
 	GF_NETIO_Parameter par;
 	Bool no_cache = GF_FALSE;
 	char range_buf[1024];
-	char pass_buf[1024];
+	char pass_buf[1124];
 	const char *user_agent;
 	const char *url;
 	const char *user_profile;
@@ -2900,6 +2914,7 @@ static GF_Err wait_for_header_and_parse(GF_DownloadSession *sess, char * sHTTP)
 	sess->chunk_run_time = 0;
 	sess->last_chunk_found = GF_FALSE;
 	gf_sk_reset(sess->sock);
+	sHTTP[0] = 0;
 
 	while (1) {
 		e = gf_dm_read_data(sess, sHTTP + bytesRead, buf_size - bytesRead, &res);
@@ -3515,6 +3530,7 @@ GF_Err gf_dm_wget(const char *url, const char *filename, u64 start_range, u64 en
 	return e;
 }
 
+GF_EXPORT
 GF_Err gf_dm_wget_with_cache(GF_DownloadManager * dm, const char *url, const char *filename, u64 start_range, u64 end_range, char **redirected_url)
 {
 	GF_Err e;
@@ -3633,6 +3649,7 @@ u32 gf_dm_sess_get_status(GF_DownloadSession *dnload)
 	return dnload ? dnload->status : GF_NETIO_STATE_ERROR;
 }
 
+GF_EXPORT
 GF_Err gf_dm_sess_reset(GF_DownloadSession *sess)
 {
 	if (!sess) return GF_BAD_PARAM;
@@ -3650,6 +3667,7 @@ GF_Err gf_dm_sess_reset(GF_DownloadSession *sess)
 	return GF_OK;
 }
 
+GF_EXPORT
 const char * gf_cache_get_cache_filename_range( const GF_DownloadSession * sess, u64 startOffset, u64 endOffset ) {
 	u32 i, count;
 	if (!sess || !sess->dm || endOffset < startOffset)
@@ -3915,6 +3933,7 @@ const DownloadedCacheEntry gf_dm_add_cache_entry(GF_DownloadManager *dm, const c
 	DownloadedCacheEntry the_entry = NULL;
 
 	gf_mx_p(dm->cache_mx );
+	GF_LOG(GF_LOG_INFO, GF_LOG_CACHE, ("[HTTP] Pushing %s to cache\n", szURL));
 	count = gf_list_count(dm->cache_entries);
 	for (i = 0 ; i < count; i++) {
 		const char * url;

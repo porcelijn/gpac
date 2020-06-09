@@ -87,7 +87,7 @@ static char* wcs_to_utf8(const wchar_t* str)
 }
 #endif
 
-
+GF_EXPORT
 GF_Err gf_rmdir(const char *DirPathName)
 {
 #if defined (_WIN32_WCE)
@@ -199,6 +199,7 @@ static Bool delete_dir(void *cbck, char *item_name, char *item_path, GF_FileEnum
 	return GF_FALSE;
 }
 
+GF_EXPORT
 GF_Err gf_cleanup_dir(const char* DirPathName)
 {
 	Bool directory_clean_mode;
@@ -828,7 +829,10 @@ GF_EXPORT
 size_t gf_fwrite(const void *ptr, size_t size, size_t nmemb,
                  FILE *stream)
 {
-	size_t result = fwrite(ptr, size, nmemb, stream);
+	size_t result = 0;
+	if (ptr) {
+		result = fwrite(ptr, size, nmemb, stream);
+	}
 	if (result != nmemb) {
 #ifdef _WIN32_WCE
 		GF_LOG(GF_LOG_ERROR, GF_LOG_CORE, ("Error writing data: %d blocks to write but %d blocks written\n", nmemb, result));

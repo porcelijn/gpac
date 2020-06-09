@@ -712,6 +712,8 @@ u32 gf_m2ts_stream_process_pmt(GF_M2TS_Mux *muxer, GF_M2TS_Mux_Stream *stream)
 		u32 info_length = 0, es_info_length = 0;
 		GF_BitStream *bs;
 
+		if (!stream->program->pcr)
+			abort();
 
 		bs = gf_bs_new(NULL,0,GF_BITSTREAM_WRITE);
 		gf_bs_write_int(bs,	0x7, 3); // reserved
@@ -2009,6 +2011,21 @@ static void gf_m2ts_stream_set_default_slconfig(GF_M2TS_Mux_Stream *stream)
 	}
 }
 
+static GF_M2TS_Mux_Stream *gf_m2ts_find_stream(GF_M2TS_Mux_Program *program, u32 pid, u32 stream_id)
+{
+	s32 i=0;
+	GF_M2TS_Mux_Stream *st = program->streams;
+	while (st) {
+		if (pid && (st->pid == pid))
+			return st;
+		if (stream_id && (st->ifce->stream_id == stream_id))
+			return st;
+		st = st->next;
+		i++;
+	}
+	return NULL;
+}
+
 static s32 gf_m2ts_stream_index(GF_M2TS_Mux_Program *program, u32 pid, u32 stream_id)
 {
 	s32 i=0;
@@ -2176,6 +2193,16 @@ GF_M2TS_Mux_Stream *gf_m2ts_program_stream_add(GF_M2TS_Mux_Program *program, str
 			break;
 		case GPAC_OTI_VIDEO_HEVC:
 			stream->mpeg2_stream_type = GF_M2TS_VIDEO_HEVC;
+			//this is a bit crude and will need refinement
+			if (ifce->depends_on_stream) {
+				GF_M2TS_Mux_Stream *base_st;
+				stream->mpeg2_stream_type = GF_M2TS_VIDEO_HEVC_TEMPORAL;
+				gf_m2ts_stream_add_hierarchy_descriptor(stream);
+				stream->force_single_au = GF_TRUE;
+				base_st = gf_m2ts_find_stream(program, 0, ifce->depends_on_stream);
+				if (base_st) base_st->force_single_au = GF_TRUE;
+			}
+
 			/*make sure we send AU delim NALU in same PES as first VCL NAL: 7 bytes (4 start code + 2 nal header + 1 AU delim)
 			+ 4 byte start code + first nal header*/
 			stream->min_bytes_copy_from_next = 12;
@@ -2835,4 +2862,3 @@ send_pck:
 }
 
 #endif /*GPAC_DISABLE_MPEG2TS_MUX*/
-

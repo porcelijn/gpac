@@ -478,7 +478,7 @@ int dc_gpac_video_moov_create(VideoOutputFile *video_output_file, char *filename
 	gf_isom_set_visual_info(video_output_file->isof, track, di, video_codec_ctx->width, video_codec_ctx->height);
 	gf_isom_set_sync_table(video_output_file->isof, track);
 
-	ret = gf_isom_setup_track_fragment(video_output_file->isof, track, 1, video_output_file->use_source_timing ? (u32) video_output_file->frame_dur : 1, 0, 0, 0, 0);
+	ret = gf_isom_setup_track_fragment(video_output_file->isof, track, 1, video_output_file->use_source_timing ? (u32) video_output_file->frame_dur : 1, 0, 0, 0, 0, 0);
 	if (ret != GF_OK) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("%s: gf_isom_setup_track_fragment\n", gf_error_to_string(ret)));
 		return -1;
@@ -576,7 +576,7 @@ int dc_gpac_video_isom_write(VideoOutputFile *video_output_file)
 int dc_gpac_video_isom_close_seg(VideoOutputFile *video_output_file)
 {
 	u64 seg_size;
-	GF_Err ret = gf_isom_close_segment(video_output_file->isof, 0, 0, 0, 0, 0, 0, GF_TRUE, GF_FALSE, video_output_file->seg_marker, NULL, NULL, &seg_size);
+	GF_Err ret = gf_isom_close_segment(video_output_file->isof, 0, 0, 0, 0, 0, 0, 0, GF_TRUE, GF_FALSE, video_output_file->seg_marker, NULL, NULL, &seg_size);
 	if (ret != GF_OK) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_DASH, ("%s: gf_isom_close_segment\n", gf_error_to_string(ret)));
 		return -1;

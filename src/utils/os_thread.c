@@ -148,8 +148,10 @@ static void currentThreadInfoKey_alloc()
 {
 	int err;
 	/* We do not use any destructor */
-	if (err = pthread_key_create(&currentThreadInfoKey, NULL))
+	err = pthread_key_create(&currentThreadInfoKey, NULL);
+	if (err) {
 		GF_LOG(GF_LOG_ERROR, GF_LOG_MUTEX, ("[Mutex] pthread_key_create() failed with error %d\n", err));
+	}
 }
 
 GF_Thread * gf_th_current() {
@@ -339,7 +341,7 @@ void gf_th_del(GF_Thread *t)
 	gf_free(t);
 }
 
-
+GF_EXPORT
 void gf_th_set_priority(GF_Thread *t, s32 priority)
 {
 #ifdef WIN32
@@ -399,6 +401,7 @@ void gf_th_set_priority(GF_Thread *t, s32 priority)
 #endif
 }
 
+GF_EXPORT
 u32 gf_th_status(GF_Thread *t)
 {
 	if (!t) return 0;
